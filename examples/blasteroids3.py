@@ -23,21 +23,22 @@ from grease import component, controller, geometry, collision, renderer, mode
 from grease.controls import KeyControls
 
 ## Utility functions ##
+path = lambda *x: os.path.join(os.path.dirname(__file__),*x)
 
-SCRIPT_DIR_PATH = os.path.dirname(__file__)
-pyglet.font.add_file(os.path.join(SCRIPT_DIR_PATH, 'font', 'Vectorb.ttf'))
+pyglet.font.add_file(path('font', 'Vectorb.ttf'))
 
 def load_sound(name, streaming=False):
     """Load a sound from the `sfx` directory"""
+    print "Loading SFX %s ..." % name
     return pyglet.media.load(
-        os.path.join(SCRIPT_DIR_PATH, 'sfx', name), streaming=streaming)
+        path('sfx', name), streaming=streaming)
 
 def looping_sound(name):
     """Load a sound from the `sfx` directory and configure it too loop
     continuously
     """
     player = pyglet.media.Player()
-    player.queue(load_sound(name, streaming=True))
+    player.queue(load_sound(name, streaming=False))
     player.eos_action = player.EOS_LOOP
     return player
 
@@ -47,6 +48,8 @@ class BlasteroidsEntity(grease.Entity):
     """Entity base class"""
 
     def explode(self):
+        if self.states.exploded == True: return
+        self.states.exploded = True
         """Segment the entity shape into itty bits"""
         shape = self.shape.verts.transform(angle=self.position.angle)
         for segment in shape.segments():
@@ -78,25 +81,32 @@ class PlayerShip(BlasteroidsEntity):
     GUN_SOUND = load_sound('pewpew.wav')
     THRUST_SOUND = looping_sound('thrust.wav')
     DEATH_SOUND = load_sound('dead.wav')
+    POWERUP_SOUND = load_sound('powerup-extra.wav')
 
     def __init__(self, world, invincible=False):
         self.position.position = (0, 0)
         self.position.angle = 0
         self.movement.velocity = (0, 0)
         self.movement.rotation = 0
+        self.states.exploded = False
         self.shape.verts = self.SHAPE_VERTS
         self.shape.closed = False
         self.renderable.color = self.COLOR
         self.collision.radius = self.COLLISION_RADIUS
         self.gun.cool_down = self.GUN_COOL_DOWN
         self.gun.sound = self.GUN_SOUND
+        self.gun.shots = 1
+        self.gun.spread = 2
+        self.gun.precision = 1
         self.set_invincible(invincible)
+        self.engine.thrust = self.THRUST_ACCEL
+        self.engine.turnrate = self.TURN_RATE
     
     def turn(self, direction):
-        self.movement.rotation = self.TURN_RATE * direction
+        self.movement.rotation = self.engine.turnrate * direction
     
     def thrust_on(self):
-        thrust_vec = geometry.Vec2d(0, self.THRUST_ACCEL)
+        thrust_vec = geometry.Vec2d(0, self.engine.thrust)
         thrust_vec.rotate(self.position.angle)
         self.movement.accel = thrust_vec
         self.shape.verts[2] = (0, -16 - random.random() * 16)
@@ -106,6 +116,12 @@ class PlayerShip(BlasteroidsEntity):
         self.movement.accel = (0, 0)
         self.shape.verts[2] = (0, -8)
         self.THRUST_SOUND.pause()
+
+    def brake(self):
+        dx, dy = self.movement.velocity
+        thrust_vec = geometry.Vec2d(-dx/200.0*self.engine.thrust,-dy/200.0*self.engine.thrust)
+        self.movement.accel = thrust_vec
+        self.shape.verts[2] = (0, -8)
     
     def set_invincible(self, invincible):
         """Set the invincibility status of the ship. If invincible is
@@ -131,11 +147,106 @@ class PlayerShip(BlasteroidsEntity):
         else:
             self.renderable.color = self.COLOR
     
+    def collect(self, obj):
+        assert(obj.taxonomy.type1 == "collectable")
+        if obj.taxonomy.subtype1 == "gun-powerup":
+            self.gun.cool_down /= 1.3
+            if self.gun.cool_down < self.GUN_COOL_DOWN / (2+self.gun.shots):
+                self.gun.cool_down *= 1.5
+                self.gun.shots += 1
+                self.POWERUP_SOUND.play()
+        elif obj.taxonomy.subtype1 == "gun-spread":
+            self.gun.spread += 2
+        elif obj.taxonomy.subtype1 == "engine-powerup":
+            if self.engine.thrust < self.THRUST_ACCEL * 2:
+                self.engine.thrust *= 1.2
+            
+            if self.engine.turnrate < self.TURN_RATE * 2:
+                self.engine.turnrate += 50
+                
+            
+        
+        
+    
     def on_collide(self, other, point, normal):
-        self.explode()
-        self.THRUST_SOUND.pause()
-        self.DEATH_SOUND.play()
-        self.world.systems.game.player_died()
+        if isinstance(other, Collectable):
+            self.collect(other)
+        else:
+            self.explode()
+            self.THRUST_SOUND.pause()
+            self.DEATH_SOUND.play()
+            self.world.systems.game.player_died()
+
+
+class Collectable(BlasteroidsEntity):
+    """Something that is collectable (powerups, 1life, etc)"""
+
+    COLLIDE_INTO_MASK = 0x2
+    UNIT_CIRCLE = [(math.sin(math.radians(a)), math.cos(math.radians(a))) 
+        for a in range(0, 360, 360/6)]
+
+    HIT_SOUNDS = [
+        load_sound('hit1c.wav'),
+        load_sound('hit2c.wav'),
+        load_sound('hit3c.wav'),
+    ]
+    POWERUP_SOUNDS = [
+        load_sound('powerup1.wav'),
+    ]
+    TYPES = [
+        "gun-powerup",
+        "engine-powerup",
+        #"gun-spread",
+    ]
+
+    def __init__(self, world, collect_type=None, position=None, parent_velocity=None):
+        radius = 9
+        if position is None:
+            self.position.position = (
+                random.choice([-1, 1]) * random.randint(50, window.width / 2), 
+                random.choice([-1, 1]) * random.randint(50, window.height / 2))
+        else:
+            self.position.position = position
+        self.movement.velocity = (random.gauss(0, 20), random.gauss(0, 20))
+        if parent_velocity is not None:
+            self.movement.velocity += parent_velocity
+        self.movement.rotation = random.gauss(0, 65)
+        verts = [(x*radius, y*radius)
+            for x, y in self.UNIT_CIRCLE]
+        self.shape.verts = verts
+        self.states.exploded = False
+        self.collision.radius = radius
+        self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK
+        self.collision.into_mask = self.COLLIDE_INTO_MASK
+        self.taxonomy.type1 = "collectable"
+        self.taxonomy.subtype1 = random.choice(self.TYPES)
+        if self.taxonomy.subtype1 == "gun-powerup":
+            self.renderable.color = "#fa3"
+        elif self.taxonomy.subtype1 == "gun-spread":        
+            self.renderable.color = "#f00"
+        elif self.taxonomy.subtype1 == "engine-powerup":        
+            self.renderable.color = "#3af"
+
+
+    def on_collide(self, other, point, normal):
+        if isinstance(other, PlayerShip):
+            random.choice(self.POWERUP_SOUNDS).play()
+            self.delete()
+        elif isinstance(other, Shot):
+            random.choice(self.HIT_SOUNDS).play()
+            ox, oy = self.movement.velocity
+            dx, dy = other.movement.velocity
+            ox += dx / 5
+            oy += dy / 5
+            self.movement.velocity = (ox,oy)
+            other.movement.velocity = -other.movement.velocity/2
+            dx, dy = other.movement.velocity
+            other.position.position[0] += dx / 10.0
+            other.position.position[1] += dy / 10.0
+            dx += random.gauss(0,50)
+            dy += random.gauss(0,50)
+            other.movement.velocity = (dx,dy)
+            
 
 
 class Asteroid(BlasteroidsEntity):
@@ -158,6 +269,7 @@ class Asteroid(BlasteroidsEntity):
                 random.choice([-1, 1]) * random.randint(50, window.height / 2))
         else:
             self.position.position = position
+        self.states.exploded = False
         self.movement.velocity = (random.gauss(0, 700 / radius), random.gauss(0, 700 / radius))
         if parent_velocity is not None:
             self.movement.velocity += parent_velocity
@@ -177,6 +289,7 @@ class Asteroid(BlasteroidsEntity):
             for i in range(2):
                 Asteroid(self.world, chunk_size, self.position.position, 
                     self.movement.velocity, self.award.points * 2)
+            Collectable(self.world,None,self.position.position,self.movement.velocity)
         random.choice(self.HIT_SOUNDS).play()
         self.explode()
         self.delete()    
@@ -199,6 +312,7 @@ class Shot(grease.Entity):
     def __init__(self, world, shooter, angle):
         offset = geometry.Vec2d(0, shooter.collision.radius)
         offset.rotate(angle)
+        self.states.exploded = False
         self.position.position = shooter.position.position + offset
         self.movement.velocity = (
             offset.normalized() * self.SPEED + shooter.movement.velocity)
@@ -209,8 +323,9 @@ class Shot(grease.Entity):
         world.clock.schedule_once(self.expire, self.TIME_TO_LIVE)
 
     def on_collide(self, other, point, normal):
-        self.world.systems.game.award_points(other)
-        self.delete()
+        if isinstance(other, Asteroid):
+            self.world.systems.game.award_points(other)
+            self.delete()
     
     def expire(self, dt):
         self.delete()
@@ -241,7 +356,13 @@ class Gun(grease.System):
     def step(self, dt):
         for entity in self.world[...].gun.firing == True:
             if self.world.time >= entity.gun.last_fire_time + entity.gun.cool_down:
-                Shot(self.world, entity, entity.position.angle)
+                for i in range(entity.gun.shots):
+                    Shot(self.world, entity, 
+                        entity.position.angle
+                        + random.gauss(0,entity.gun.spread/float(entity.gun.precision))
+                        + i * entity.gun.spread - entity.gun.shots * entity.gun.spread/2
+                        )
+                    
                 if entity.gun.sound is not None:
                     entity.gun.sound.play()
                 entity.gun.last_fire_time = self.world.time
@@ -281,7 +402,7 @@ class GameSystem(KeyControls):
         self.level = 0
         self.lives = 3
         self.score = 0
-        self.player_ship = PlayerShip(self.world)
+        self.player_ship = PlayerShip(self.world, invincible=True)
         self.start_level()
     
     def start_level(self):
@@ -353,11 +474,19 @@ class GameSystem(KeyControls):
         if self.player_ship.exists:
             self.player_ship.thrust_on()
         
+    @KeyControls.key_release(key.DOWN)
+    @KeyControls.key_release(key.S)
     @KeyControls.key_release(key.UP)
     @KeyControls.key_release(key.W)
     def stop_thrust(self):
         if self.player_ship.exists:
             self.player_ship.thrust_off()
+            
+    @KeyControls.key_hold(key.DOWN)
+    @KeyControls.key_hold(key.S)
+    def brake(self, dt):
+        if self.player_ship.exists:
+            self.player_ship.brake()
             
     @KeyControls.key_press(key.SPACE)
     def start_firing(self):
@@ -473,7 +602,19 @@ class BaseWorld(grease.World):
             firing=bool, 
             last_fire_time=float, 
             cool_down=float, 
+            spread=float, 
+            precision=float, 
+            shots=int,
             sound=object)
+        self.components.taxonomy = component.Component(
+            type1=str,
+            subtype1=str)
+        self.components.states = component.Component(
+            exploded=bool)
+        self.components.engine = component.Component(
+            thrust=float,
+            turnrate=float,
+            )
         self.components.award = component.Component(points=int)
 
         self.systems.movement = controller.EulerMovement()
