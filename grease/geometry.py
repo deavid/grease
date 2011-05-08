@@ -400,77 +400,77 @@ Vec2d._fields_ = [
 
 class Vec2dArray(list):
 
-	def __init__(self, iterable=()):
-		list.__init__(self, (Vec2d(i) for i in iterable))
+    def __init__(self, iterable=()):
+        list.__init__(self, (Vec2d(i) for i in iterable))
 
-	def __setitem__(self, index, value):
-		list.__setitem__(self, index, Vec2d(value))
-	
-	def append(self, value):
-		"""Append a vector to the array"""
-		list.append(self, Vec2d(value))
-	
-	def insert(self, index, value):
-		"""Insert a vector into the array"""
-		list.insert(self, index, Vec2d(value))
-	
-	def transform(self, offset=Vec2d(0,0), angle=0, scale=1.0):
-		"""Return a new transformed Vec2dArray"""
-		offset = Vec2d(offset)
-		angle = math.radians(-angle)
-		rot_vec = Vec2d(math.cos(angle), math.sin(angle))
-		xformed = Vec2dArray()
-		for vec in self:
-			xformed.append(vec.cpvrotate(rot_vec) * scale + offset)
-		return xformed
-	
-	def segments(self, closed=True):
-		"""Generate arrays of line segments connecting adjacent vetices
-		in this array, exploding the shape into it's constituent segments
-		"""
-		if len(self) >= 2:
-			last = self[0]
-			for vert in self[1:]:
-				yield Vec2dArray((last, vert))
-				last = vert
-			if closed:
-				yield Vec2dArray((last, self[0]))
-		elif self and closed:
-			yield Vec2dArray((self[0], self[0]))
+    def __setitem__(self, index, value):
+        list.__setitem__(self, index, Vec2d(value))
+    
+    def append(self, value):
+        """Append a vector to the array"""
+        list.append(self, Vec2d(value))
+    
+    def insert(self, index, value):
+        """Insert a vector into the array"""
+        list.insert(self, index, Vec2d(value))
+    
+    def transform(self, offset=Vec2d(0,0), angle=0, scale=1.0):
+        """Return a new transformed Vec2dArray"""
+        offset = Vec2d(offset)
+        angle = math.radians(-angle)
+        rot_vec = Vec2d(math.cos(angle), math.sin(angle))
+        xformed = Vec2dArray()
+        for vec in self:
+            xformed.append(vec.cpvrotate(rot_vec) * scale + offset)
+        return xformed
+    
+    def segments(self, closed=True):
+        """Generate arrays of line segments connecting adjacent vetices
+        in this array, exploding the shape into it's constituent segments
+        """
+        if len(self) >= 2:
+            last = self[0]
+            for vert in self[1:]:
+                yield Vec2dArray((last, vert))
+                last = vert
+            if closed:
+                yield Vec2dArray((last, self[0]))
+        elif self and closed:
+            yield Vec2dArray((self[0], self[0]))
 
 
 
 class Rect(ctypes.Structure):
-	"""Simple rectangle. Will gain more functionality as needed"""
-	_fields_ = [
-		('left', ctypes.c_double),
-		('top', ctypes.c_double),
-		('right', ctypes.c_double),
-		('bottom', ctypes.c_double),
-	]
+    """Simple rectangle. Will gain more functionality as needed"""
+    _fields_ = [
+        ('left', ctypes.c_double),
+        ('top', ctypes.c_double),
+        ('right', ctypes.c_double),
+        ('bottom', ctypes.c_double),
+    ]
 
-	def __init__(self, rect_or_left, bottom=None, right=None, top=None):
-		if bottom is not None:
-			assert right is not None and top is not None, "No enough arguments to Rect"
-			self.left = rect_or_left
-			self.bottom = bottom
-			self.right = right
-			self.top = top
-		else:
-			self.left = rect_or_left.left
-			self.bottom = rect_or_left.bottom
-			self.right = rect_or_left.right
-			self.top = rect_or_left.top
+    def __init__(self, rect_or_left, bottom=None, right=None, top=None):
+        if bottom is not None:
+            assert right is not None and top is not None, "No enough arguments to Rect"
+            self.left = rect_or_left
+            self.bottom = bottom
+            self.right = right
+            self.top = top
+        else:
+            self.left = rect_or_left.left
+            self.bottom = rect_or_left.bottom
+            self.right = rect_or_left.right
+            self.top = rect_or_left.top
 
-	@property
-	def width(self):
-		"""Rectangle width"""
-		return self.right - self.left
-	
-	@property
-	def height(self):
-		"""Rectangle height"""
-		return self.top - self.bottom
+    @property
+    def width(self):
+        """Rectangle width"""
+        return self.right - self.left
+    
+    @property
+    def height(self):
+        """Rectangle height"""
+        return self.top - self.bottom
 
 
 ########################################################################

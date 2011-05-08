@@ -12,14 +12,29 @@
 #############################################################################
 """Grease tutorial game revision 3"""
 
-import os
+import os, sys
 import math
 import random
 import itertools
 import pyglet
 from pyglet.window import key
 import grease
-from grease import component, controller, geometry, collision, renderer, mode
+from grease import component, controller, geometry, mode
+
+from grease import collision
+from grease import controller
+from grease import renderer
+
+try:
+    from grease.cython import collision
+    from grease.cython import controller
+    from grease.cython import renderer
+except Exception, e:
+    print "Unexpected error when trying to load cython-compiled parts:"
+    print repr(e)
+    print "Python-versions of grease have been loaded instead."
+    print "This can lead to less performance."
+
 from grease.controls import KeyControls
 
 ## Utility functions ##
@@ -110,11 +125,19 @@ class PlayerShip(BlasteroidsEntity):
         self.gun.cool_down = self.GUN_COOL_DOWN
         self.gun.sound = self.GUN_SOUND
         self.gun.shots = 1
-        self.gun.spread = 15
+        self.gun.spread = 15.35
         self.gun.precision = 5
         self.set_invincible(invincible)
         self.engine.thrust = self.THRUST_ACCEL
         self.engine.turnrate = self.TURN_RATE
+        if "--cheat1" in sys.argv:
+            self.engine.thrust *= 1.5
+            self.engine.turnrate *= 1.2
+            self.gun.precision = 15
+            self.gun.spread = 10
+            self.gun.shots = 32
+            self.gun.cool_down /= 5.0
+        
     
     def turn(self, direction):
         self.movement.rotation = self.engine.turnrate * direction
@@ -169,7 +192,7 @@ class PlayerShip(BlasteroidsEntity):
         assert(obj.taxonomy.type1 == "collectable")
         if obj.taxonomy.subtype1 == "gun-powerup":
             self.gun.cool_down /= 1.3
-            self.gun.spread /= 1.3
+            self.gun.spread /= 1.5
             if self.gun.cool_down < self.GUN_COOL_DOWN / (1.0 + self.gun.shots / 2.0):
                 self.gun.cool_down *= 2
                 self.gun.shots += 1
@@ -253,7 +276,8 @@ class Collectable(BlasteroidsEntity):
         self.states.exploded = False
         self.states.created = self.world.time
         self.collision.radius = radius
-        self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK | Asteroid.COLLIDE_INTO_MASK
+        self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK | self.COLLIDE_INTO_MASK
+        #self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK
         self.collision.into_mask = self.COLLIDE_INTO_MASK
         self.taxonomy.type1 = "collectable"
 
@@ -365,6 +389,7 @@ class Asteroid(BlasteroidsEntity):
         self.renderable.color = "#aaa"
         self.collision.radius = radius
         self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK | self.COLLIDE_INTO_MASK
+        #self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK
         self.collision.into_mask = self.COLLIDE_INTO_MASK
         self.award.points = points
 
@@ -411,6 +436,9 @@ class Asteroid(BlasteroidsEntity):
                     other.delete()
             return
         if isinstance(other, Shot):
+            if other.collision.radius == 0: return
+            if self.collision.radius == 0: return
+            other.collision.radius = 0
             if self.collision.radius > 12:
                 total_area = 3.1415927 * (self.collision.radius ** 2) 
                 total_area -= 10
@@ -445,6 +473,8 @@ class Asteroid(BlasteroidsEntity):
                 random.choice(self.HIT_SOUNDS).play()
             else:
                 random.choice(self.HIT_SMALL_SOUNDS).play()
+            self.collision.radius = 0
+                
             self.explode()
             self.delete()    
 
@@ -463,18 +493,28 @@ class Shot(grease.Entity):
     SPEED = 150
     TIME_TO_LIVE = 1.70 # seconds
     
-    def __init__(self, world, shooter, angle):
+    def __init__(self, world, shooter, angle, offset2sz = 0, spread = 0):
         offset = geometry.Vec2d(0, shooter.collision.radius)
         offset.rotate(angle)
+        offset2 = geometry.Vec2d(0, shooter.collision.radius)
+        offset2.rotate(angle+90)
+        spreadn = max(spread, 2.0)
+        vertical_sep =  offset2sz/spreadn
+        self.collision.radius = 2.0
+        
         self.states.exploded = False
-        self.position.position = shooter.position.position + offset
+        
+        self.position.position = shooter.position.position + offset * (3-abs(offset2sz/4)) + offset2 * vertical_sep 
         self.movement.velocity = (
             offset.normalized() * self.SPEED + shooter.movement.velocity)
+        self.movement.accel = offset2 * -offset2sz * spread / 10.0 + offset.normalized() * (40.0 - abs(offset2sz)*5) / spreadn
         self.shape.verts = [(0, 1.5), (1.5, -1.5), (-1.5, -1.5)]
-        self.collision.radius = 2.0
-        self.collision.from_mask = ~shooter.collision.into_mask
+        self.collision.from_mask = Asteroid.COLLIDE_INTO_MASK
         self.renderable.color = "#ffc"
-        world.clock.schedule_once(self.expire, self.TIME_TO_LIVE)
+        if "--cheat1" in sys.argv:
+            world.clock.schedule_once(self.expire, self.TIME_TO_LIVE*2 / (1+abs(offset2sz) / 10.0) )
+        else:
+            world.clock.schedule_once(self.expire, self.TIME_TO_LIVE / (1+abs(offset2sz) / 10.0))
 
     def on_collide(self, other, point, normal):
         if isinstance(other, Asteroid):
@@ -515,12 +555,16 @@ class Gun(grease.System):
                 if shots > entity.gun.shots:
                     shots = entity.gun.shots 
                 if shots < 1: shots = 1
+                spread = entity.gun.spread
+                if spread * (shots) >= 360:
+                    spread = 360 / (shots)
                     
                 for i in range(shots):
                     Shot(self.world, entity, 
                         entity.position.angle
                         + precision_angle
-                        + i * entity.gun.spread - (shots-1) * entity.gun.spread/2
+                        + i * spread - (shots-1) * spread/2, 
+                        (i - (shots-1) / 2.0), spread
                         )
                     
                 if entity.gun.sound is not None:
@@ -791,6 +835,7 @@ class BaseWorld(grease.World):
 
         self.renderers.camera = renderer.Camera(
             position=(window.width / 2, window.height / 2))
+            
         self.renderers.vector = renderer.Vector(line_width=1.5)
 
 

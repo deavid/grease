@@ -1,0 +1,10 @@
+build/*
+grease/cython/*.c
+grease/cython/*.o
+grease/cython/*.so
+grease/cython/*/*.c
+grease/cython/*/*.o
+grease/cython/*/*.so
+doc/tutorial/blaster*.py
+*.pyc
+

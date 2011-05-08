@@ -502,7 +502,8 @@ def dispatch_events(collision_system):
     """
     collision = getattr(collision_system.world.components, 
         collision_system.collision_component)
-    for pair in collision_system.collision_pairs:
+    cpairs = collision_system.collision_pairs
+    for pair in cpairs:
         entity1, entity2 = pair
         if pair.info is not None:
             args1, args2 = pair.info

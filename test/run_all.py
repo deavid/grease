@@ -9,5 +9,5 @@ from collision_test import *
 from mode_test import *
 
 if __name__ == '__main__':
-	unittest.main()
+    unittest.main()
 
