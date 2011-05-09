@@ -42,6 +42,41 @@ __version__ = '$Id$'
 from grease.geometry import Vec2d
 from bisect import bisect_right
 
+import time, math
+
+cdef extern from "unistd.h":
+    long int sysconf(int)
+    int _SC_CLK_TCK
+    
+cdef long int ticks_per_sec
+ticks_per_sec = sysconf(_SC_CLK_TCK)
+
+ctypedef struct tms:
+   int tms_utime 
+   int tms_stime 
+   int tms_cutime 
+   int tms_cstime 
+    
+cdef extern from "time.h":
+    int clock ()
+    int CLOCKS_PER_SEC
+    int times (tms* )
+
+cdef float MIN_TIME_DELTA = 50
+
+cdef double curr_time1():
+    cdef double ticks
+    cdef tms time1
+
+    ticks = times(&time1)
+    #ticks = time1.tms_utime 
+    ticks /= ticks_per_sec
+    return ticks * 1000.0
+    
+cdef double curr_time():
+    cdef double ticks
+    ticks = time.time()
+    return ticks * 1000.0
 
 class Pair(tuple):
     """Pair of entities in collision. This is an ordered sequence of two
@@ -81,7 +116,7 @@ class Pair(tuple):
         )
 
 
-class BroadSweepAndPrune(object):
+cdef class BroadSweepAndPrune:
     """2D Broad-phase sweep and prune bounding box collision detector
 
     This algorithm is efficient for collision detection between many
@@ -100,36 +135,83 @@ class BroadSweepAndPrune(object):
         entities' aabb and collision masks.
     :type collision_component: str
     """
-    world = None
-    """|World| object this system belongs to"""
 
-    collision_component = None
+    cdef object _collision_component
+    cdef object _by_x
+    cdef object _by_y
+    cdef object _collision_pairs
+    
+    cdef object world
+    cdef float minx
+    cdef float maxx
+    cdef float miny
+    cdef float maxy
+    cdef float totalarea
+    cdef float usedarea
+    cdef int resolution
+    cdef int maxresolution
+    cdef int stepn
+    cdef float lastdt
+    
+    
+    def get_collision_component(self):
+        return self._collision_component
+        
+    def set_collision_component(self,value):
+        self._collision_component = value
+        
+    collision_component = property(get_collision_component,set_collision_component)
     """Name of world's collision component used by this system"""
 
-    LEFT_ATTR = "left"
-    RIGHT_ATTR = "right"
-    TOP_ATTR = "top"
-    BOTTOM_ATTR = "bottom"
-
-    def __init__(self, collision_component='collision'):
-        self.collision_component = collision_component
+    cdef object LEFT_ATTR
+    cdef object RIGHT_ATTR 
+    cdef object TOP_ATTR 
+    cdef object BOTTOM_ATTR
+    
+    def __cinit__(self, collision_component='collision'):
+        self.RIGHT_ATTR = "right"
+        self.TOP_ATTR = "top"
+        self.LEFT_ATTR = "left"
+        self.BOTTOM_ATTR = "bottom"
         self._by_x = None
         self._by_y = None
+        self.stepn = 0
         self._collision_pairs = None
+        self.maxresolution = 3
+        self.resolution = self.maxresolution
+     
+    def __init__(self, collision_component='collision'):
+        self._collision_component = collision_component
     
     def set_world(self, world):
         """Bind the system to a world"""
         self.world = world
-    
-    def step(self, dt):
+        
+    cpdef step(self, dt):
         """Update the system for this time step, updates and sorts the 
         axis arrays.
         """
-        component = getattr(self.world.components, self.collision_component)
-        LEFT = self.LEFT_ATTR
-        RIGHT = self.RIGHT_ATTR
-        TOP = self.TOP_ATTR
-        BOTTOM = self.BOTTOM_ATTR
+        cdef double t1
+        cdef double t2
+        cdef double tdelta
+        t1 = curr_time()
+        self.stepn +=1
+        self.lastdt = dt
+        #if self.stepn % 10 == 0:
+        #    print "dt: %.2fms (%.1ffps)" % (dt * 1000.0, 1.0/dt)
+        #self.update_hash_ranges(component.itervalues())
+        self._collision_pairs = None
+        t2 = curr_time()
+        tdelta = t2 - t1
+        if tdelta > MIN_TIME_DELTA: 
+            print "Collision-broad-step, tdelta: %.3fms (dt was %.3fms)" % (tdelta, dt*1000.0)
+        return
+        
+        cdef object component = getattr(self.world.components, self.collision_component)
+        cdef object LEFT = self.LEFT_ATTR
+        cdef object RIGHT = self.RIGHT_ATTR
+        cdef object TOP = self.TOP_ATTR
+        cdef object BOTTOM = self.BOTTOM_ATTR
         if self._by_x is None:
             # Build axis lists from scratch
             # Note we cache the box positions here
@@ -184,72 +266,226 @@ class BroadSweepAndPrune(object):
         # less efficient with very fast moving, or teleporting entities
         by_x.sort()
         by_y.sort()
+        self.minx = by_x[0][0]
+        self.maxx = by_x[-1][0]
+        self.miny = by_y[0][0]
+        self.maxy = by_y[-1][0]
+        
         self._collision_pairs = None
+        
+        t2 = curr_time()
+        tdelta = t2 - t1
+        if tdelta > MIN_TIME_DELTA: 
+            print "Collision-broad-step, tdelta: %.3fms (dt was %.3fms)" % (tdelta, dt*1000.0)
+            #print (minx, maxx), (miny,maxy)
+        
     
     @property
     def collision_pairs(self):
-        """Set of candidate collision pairs for this timestep"""
+        cdef double t1
+        cdef double t2
+        cdef double tdelta
         if self._collision_pairs is None:
-            if self._by_x is None:
-                # Axis arrays not ready
-                return set()
+            t1 = curr_time()
+            
+            self._c_collision_pairs()
+            
+            t2 = curr_time()
+            tdelta = t2 - t1
+            if tdelta > MIN_TIME_DELTA: 
+                print "Collision-broad-pairs, tdelta: %.3fms" % (tdelta)
+                
+        ret = self._collision_pairs
+        return ret
+    
+    cdef float getfloatkx(self, x):
+        cdef float kx
+        kx = (x - self.minx) * self.resolution / (self.maxx-self.minx)
+        return kx
+        
+    cdef float getfloatky(self, y):
+        cdef float ky
+        ky = (y - self.miny) * self.resolution / (self.maxy-self.miny)
+        return ky
+    
+    cdef int getkx(self, x):
+        return round(self.getfloatkx(x))
+        
+    cdef int getky(self, y):
+        return round(self.getfloatky(y))
+        
+    cdef int update_partial_pairs(self,oxy,pidx):
+        add_pair = self._collision_pairs.add
+        cdef unsigned int mask1
+        cdef unsigned int mask2
+        cdef int added = 0
+        cdef int viewed = 0
+        
+        for i in range(len(oxy)-1):
+            d1 = oxy[i].entity
+            for j in range(i+1,len(oxy)):
+                d2 = oxy[j].entity
+                mask1 = (d1.collision.from_mask & d2.collision.into_mask)
+                mask2 = (d2.collision.from_mask & d1.collision.into_mask)
+                if (mask1 | mask2) == 0: continue
+                viewed += 1
+                if d1.entity_id not in pidx:
+                    pidx[d1.entity_id] = set([])
+                if d2.entity_id not in pidx:
+                    pidx[d2.entity_id] = set([])
+                if d2.entity_id not in pidx[d1.entity_id]:
+                    pidx[d1.entity_id].add(d2.entity_id)
+                    pidx[d2.entity_id].add(d1.entity_id)
+                    pair = Pair(d1, d2)
+                    if pair not in self._collision_pairs:
+                        add_pair( pair )
+                        added += 1
+        return viewed
+                        
+    cdef compute_hash_index(self, iterator):
+        cdef float px
+        cdef float py
+        cdef float kpx
+        cdef float kpy
+        cdef float kx1
+        cdef float ky1
+        cdef float distance
+        
+        pairs_in = []
+        objk = {}
+        self.minx = 999
+        self.maxx = -999
+        self.miny = 999
+        self.maxy = -999
+        self.totalarea = 0
+        self.usedarea = 0
+        for data in iterator:
+            kx = [ data.aabb.left, data.aabb.right ]
+            kx.sort()
+            ky = [ data.aabb.bottom, data.aabb.top ]
+            ky.sort()
+            if kx[0] < self.minx: self.minx = kx[0]
+            if kx[1] > self.maxx: self.maxx = kx[1]
+            if ky[0] < self.miny: self.miny = ky[0]
+            if ky[1] > self.maxy: self.maxy = ky[1]
+            self.usedarea += (kx[1] - kx[0]) * (ky[1] - ky[0])
+        self.totalarea = (self.maxx - self.minx) * (self.maxy - self.miny)
+        #shape_radius = self.resolution * 0.7071
+        added = 0
+        for data in iterator:
+            kx = [ self.getkx(data.aabb.left ), self.getkx(data.aabb.right) ]
+            kx.sort()
+            ky = [ self.getky(data.aabb.bottom ), self.getky(data.aabb.top) ]
+            ky.sort()
+            for x in range(kx[0], kx[1] + 1):
+                if x not in objk:
+                    objk[x] = {}
+                for y in range(ky[0], ky[1] + 1):
+                    """
+                    px, py = data.entity.position.position
+                    kpx, kpy = (self.getfloatkx(px), self.getfloatky(py))
+                    kx1 = (kx[0] + kx[1]) / 2.0
+                    ky1 = (ky[0] + ky[1]) / 2.0
+                    distance = math.sqrt((kpx - kx1) ** 2 + (kpy - ky1) ** 2)
+                    if  distance > (self.getfloatkx(data.entity.collision.radius) + self.getfloatky(data.entity.collision.radius) / 2.0) + 0.5:
+                        continue
+                    """
+                    if y not in objk[x]:
+                        objk[x][y] = []
+                    elif len(objk[x][y]) == 1:
+                        pairs_in.append( (x,y) )
+                    objk[x][y].append(data)
+                    added += 1
+        #if self.stepn % 30 == 0:
+        #    print added
+        return pairs_in,objk
 
-            LEFT = self.LEFT_ATTR
-            RIGHT = self.RIGHT_ATTR
-            TOP = self.TOP_ATTR
-            BOTTOM = self.BOTTOM_ATTR
-            # Build candidates overlapping along the x-axis
-            component = getattr(self.world.components, self.collision_component)
-            xoverlaps = set()
-            add_xoverlap = xoverlaps.add
-            discard_xoverlap = xoverlaps.discard
-            open = {}
-            for _, side, data in self._by_x:
-                if side is LEFT:
-                    for open_entity, (from_mask, into_mask) in open.iteritems():
-                        if data.from_mask & into_mask or from_mask & data.into_mask:
-                            add_xoverlap(Pair(data.entity, open_entity))
-                    open[data.entity] = (data.from_mask, data.into_mask)
-                elif side is RIGHT:
-                    del open[data.entity]
-
-            if len(xoverlaps) <= 10 and len(xoverlaps)*4 < len(self._by_y):
-                # few candidates were found, so just scan the x overlap candidates
-                # along y. This requires an additional sort, but it should
-                # be cheaper than scanning everyone and its simpler
-                # than a separate brute-force check
-                entities = set([entity for entity, _ in xoverlaps] 
-                    + [entity for _, entity in xoverlaps])
-                by_y = []
-                for entity in entities:
-                    data = component[entity]
-                    # We can use tuples here, which are cheaper to create
-                    by_y.append((data.aabb.bottom, BOTTOM, data))
-                    by_y.append((data.aabb.top, TOP, data))
-                by_y.sort()
+    cdef int _c_update_pairs(self,iterator, pidx, depth = 0) except -1:
+        viewed = 0
+        prevused = self.usedarea
+        pairs_in, objk = self.compute_hash_index(iterator)
+        if not pairs_in: return 1
+        used = self.usedarea
+        total = self.totalarea
+        resolution = self.resolution
+        if not prevused: prevused = used * 2
+        for x,y in pairs_in:
+            oxy = objk[x][y]
+            if used < total and used < prevused and depth < 2 and len(oxy) >= 5:
+                #self.resolution = max(7,len(oxy))
+                viewed+=self._c_update_pairs(oxy,pidx, depth + 1)
             else:
-                by_y = self._by_y
+                viewed+=self.update_partial_pairs(oxy,pidx)
+        #if self.stepn % 5 == 0 and depth == 0:
+        #    print resolution, depth, viewed, "%d / %d" % (used, total)
+        return viewed
+        
+    cdef int _c_collision_pairs(self) except -1:
+        """Set of candidate collision pairs for this timestep"""
+        pidx = {}
+        self.usedarea = 0
+        cdef object component = getattr(self.world.components, self.collision_component)
+        self.resolution = self.maxresolution
+        self._collision_pairs = set()
+        self._c_update_pairs(list(component.itervalues()), pidx)
+        return 0
+            
+        LEFT = self.LEFT_ATTR
+        RIGHT = self.RIGHT_ATTR
+        TOP = self.TOP_ATTR
+        BOTTOM = self.BOTTOM_ATTR
+        # Build candidates overlapping along the x-axis
+        component = getattr(self.world.components, self.collision_component)
+        xoverlaps = set()
+        add_xoverlap = xoverlaps.add
+        discard_xoverlap = xoverlaps.discard
+        open = {}
+        for _, side, data in self._by_x:
+            if side is LEFT:
+                for open_entity, (from_mask, into_mask) in open.iteritems():
+                    if data.from_mask & into_mask or from_mask & data.into_mask:
+                        add_xoverlap(Pair(data.entity, open_entity))
+                open[data.entity] = (data.from_mask, data.into_mask)
+            elif side is RIGHT:
+                del open[data.entity]
 
-            # Now check the candidates along the y-axis
-            open = set()
-            add_open = open.add
-            discard_open = open.discard
-            self._collision_pairs = set()
-            add_pair = self._collision_pairs.add
-            for _, side, data in by_y:
-                if side is BOTTOM:
-                    for open_entity in open:
-                        pair = Pair(data.entity, open_entity)
-                        if pair in xoverlaps:
-                            discard_xoverlap(pair)
-                            add_pair(pair)
-                            if not xoverlaps:
-                                # No more candidates, bail
-                                return self._collision_pairs
-                    add_open(data.entity)
-                elif side is TOP:
-                    discard_open(data.entity)
-        return self._collision_pairs
+        if len(xoverlaps) <= 10 and len(xoverlaps)*4 < len(self._by_y):
+            # few candidates were found, so just scan the x overlap candidates
+            # along y. This requires an additional sort, but it should
+            # be cheaper than scanning everyone and its simpler
+            # than a separate brute-force check
+            entities = set([entity for entity, _ in xoverlaps] 
+                + [entity for _, entity in xoverlaps])
+            by_y = []
+            for entity in entities:
+                data = component[entity]
+                # We can use tuples here, which are cheaper to create
+                by_y.append((data.aabb.bottom, BOTTOM, data))
+                by_y.append((data.aabb.top, TOP, data))
+            by_y.sort()
+        else:
+            by_y = self._by_y
+
+        # Now check the candidates along the y-axis
+        open = set()
+        add_open = open.add
+        discard_open = open.discard
+        self._collision_pairs = set()
+        add_pair = self._collision_pairs.add
+        for _, side, data in by_y:
+            if side is BOTTOM:
+                for open_entity in open:
+                    pair = Pair(data.entity, open_entity)
+                    if pair in xoverlaps:
+                        discard_xoverlap(pair)
+                        add_pair(pair)
+                        if not xoverlaps:
+                            # No more candidates, bail
+                            return 1
+                add_open(data.entity)
+            elif side is TOP:
+                discard_open(data.entity)
+
     
     def query_point(self, x_or_point, y=None, from_mask=0xffffffff):
         """Hit test at the point specified. 
@@ -405,6 +641,8 @@ class Circular(object):
         """Update the collision system for this time step and invoke
         the handlers
         """
+        t1 = curr_time()
+        
         if self.update_aabbs:
             for position, collision in self.world.components.join(
                 self.position_component, self.collision_component):
@@ -415,24 +653,38 @@ class Circular(object):
                 aabb.right = x + radius
                 aabb.bottom = y - radius
                 aabb.top = y + radius
+                
+        t2 = curr_time()
+        tdelta = t2 - t1
+        if tdelta > MIN_TIME_DELTA: 
+            print "Collision-circular-step-1, tdelta: %.3fms" % (tdelta)
+            
         self.broad_phase.step(dt)
+
         self._collision_pairs = None
         for handler in self.handlers:
             handler(self)
+            
     
     @property
     def collision_pairs(self):
         """The set of entity pairs in collision in this timestep"""
         if self._collision_pairs is None:
+            cpairs = self.broad_phase.collision_pairs
+            t1 = curr_time()
             position = getattr(self.world.components, self.position_component)
             collision = getattr(self.world.components, self.collision_component)
             pairs = self._collision_pairs = set()
-            for pair in self.broad_phase.collision_pairs:
+            for pair in cpairs:
                 entity1, entity2 = pair
-                position1 = position[entity1].position
-                position2 = position[entity2].position
-                radius1 = collision[entity1].radius
-                radius2 = collision[entity2].radius
+                try:
+                    position1 = position[entity1].position
+                    position2 = position[entity2].position
+                    radius1 = collision[entity1].radius
+                    radius2 = collision[entity2].radius
+                except KeyError:
+                    # one of the entities no longer exists.
+                    continue
                 separation = position2 - position1
                 if separation.get_length_sqrd() <= (radius1 + radius2)**2:
                     normal = separation.normalized()
@@ -440,6 +692,12 @@ class Circular(object):
                         normal * radius1 + position1, normal,
                         normal * -radius2 + position2, -normal)
                     pairs.add(pair)
+            
+            t2 = curr_time()
+            tdelta = t2 - t1
+            if tdelta > MIN_TIME_DELTA: 
+                print "Collision-circular-pairs, tdelta: %.3fms" % (tdelta)
+
         return self._collision_pairs
     
     def query_point(self, x_or_point, y=None, from_mask=0xffffffff):
@@ -503,6 +761,7 @@ def dispatch_events(collision_system):
     collision = getattr(collision_system.world.components, 
         collision_system.collision_component)
     cpairs = collision_system.collision_pairs
+    t1 = curr_time()
     for pair in cpairs:
         entity1, entity2 = pair
         if pair.info is not None:
@@ -527,3 +786,7 @@ def dispatch_events(collision_system):
             if masks_align:
                 on_collide(*args1)
 
+    t2 = curr_time()
+    tdelta = t2 - t1
+    if tdelta > MIN_TIME_DELTA: 
+        print "Collision-dispatch-events, tdelta: %.3fms" % (tdelta)
