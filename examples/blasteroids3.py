@@ -20,6 +20,7 @@ import pyglet
 from pyglet.window import key
 import grease
 from grease import component, controller, geometry, mode
+from grease.geometry import Vec2d
 
 #from grease import collision
 #from grease import controller
@@ -97,15 +98,15 @@ class Debris(grease.Entity):
 class PlayerShip(BlasteroidsEntity):
     """Thrust ship piloted by the player"""
 
-    THRUST_ACCEL = 75
-    TURN_RATE = 240
+    THRUST_ACCEL = 50
+    TURN_RATE = 150
     SHAPE_VERTS = [
         (-8, -12), (-4, -10), (0, -8), (4, -10), (8, -12), # flame
         (0, 12), (-8, -12), (0, -8), (8, -12)]
     COLOR = "#7f7"
     COLLISION_RADIUS = 7.5
     COLLIDE_INTO_MASK = 0x1
-    GUN_COOL_DOWN = 0.5
+    GUN_COOL_DOWN = 2.0
     GUN_SOUND = load_sound('pewpew.wav')
     THRUST_SOUND = looping_sound('thrust.wav')
     DEATH_SOUND = load_sound('dead.wav')
@@ -124,9 +125,9 @@ class PlayerShip(BlasteroidsEntity):
         self.collision.radius = self.COLLISION_RADIUS
         self.gun.cool_down = self.GUN_COOL_DOWN
         self.gun.sound = self.GUN_SOUND
-        self.gun.shots = 1
+        self.gun.shots = 3
         self.gun.spread = 15.35
-        self.gun.precision = 5
+        self.gun.precision = 1
         self.set_invincible(invincible)
         self.engine.thrust = self.THRUST_ACCEL
         self.engine.turnrate = self.TURN_RATE
@@ -325,9 +326,14 @@ class Collectable(BlasteroidsEntity):
             
             #self.position.position[0] += nx / d1 * 1.0
             #self.position.position[1] += ny / d1 * 1.0
-            self.movement.velocity *= 0.8
-            self.movement.velocity[0] += nx / d1 * 2.0
-            self.movement.velocity[1] += ny / d1 * 2.0
+            self.movement.velocity *= 0.5
+            other.movement.velocity *= 0.5
+            self.movement.velocity[0] += nx / d1 * 8.0
+            self.movement.velocity[1] += ny / d1 * 8.0
+            other.movement.velocity[0] += nx / d1 * -8.0
+            other.movement.velocity[1] += ny / d1 * -8.0
+            #other.position.position[0] += nx / d1 * -2.0
+            #other.position.position[1] += ny / d1 * -2.0
             if self.world.time - self.states.created < 1: return
             if self.world.time - other.states.created < 1: return
             if isinstance(other, Collectable):
@@ -365,7 +371,7 @@ class Asteroid(BlasteroidsEntity):
     UNIT_CIRCLE_4 = [(math.sin(math.radians(a)), math.cos(math.radians(a))) 
         for a in range(0, 360, 18*4)]
     
-    def __init__(self, world, radius=45, position=None, parent_velocity=None, points=25):
+    def __init__(self, world, radius=65, position=None, parent_velocity=None, points=25):
         if position is None:
             self.position.position = (
                 random.choice([-1, 1]) * random.randint(50, window.width / 2), 
@@ -392,11 +398,29 @@ class Asteroid(BlasteroidsEntity):
             for x, y in circle]
         self.shape.verts = verts
         self.renderable.color = "#aaa"
-        self.collision.radius = radius
-        self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK | self.COLLIDE_INTO_MASK | Shot.COLLIDE_INTO_MASK
-        #self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK
-        self.collision.into_mask = self.COLLIDE_INTO_MASK
+        world.clock.schedule_once(self.begin_collide, 0.1)
+        world.clock.schedule_interval(self.set_radius, 0.05, world, radius)
+        self.collision.radius = 0.01
+        self.collision.from_mask = 0
+        self.collision.into_mask = 0
         self.award.points = points
+        
+    def set_radius(self,dt,world, radius):
+        try:
+            self.collision.radius += radius / 10.0
+            if self.collision.radius > radius:
+                self.collision.radius = radius
+                world.clock.unschedule(self.set_radius)
+        except AttributeError:
+            world.clock.unschedule(self.set_radius)
+            
+            
+        
+        
+    def begin_collide(self,dt):
+        self.collision.from_mask = PlayerShip.COLLIDE_INTO_MASK | self.COLLIDE_INTO_MASK | Shot.COLLIDE_INTO_MASK
+        self.collision.into_mask = self.COLLIDE_INTO_MASK
+        
 
     def on_collide(self, other, point, normal):
         if isinstance(other, Asteroid):
@@ -413,11 +437,16 @@ class Asteroid(BlasteroidsEntity):
             if d1 > 0: d1 += 1
             else: d1 = d / ( self.collision.radius + other.collision.radius )
             if d1 < 0.001: d1 = 0.001
-            if (self.world.time - self.states.created < 1 or
-               self.world.time - other.states.created < 1):
-                self.position.position[0] += nx / d1 * 3.0 * other.collision.radius / self.collision.radius
-                self.position.position[1] += ny / d1 * 3.0 * other.collision.radius / self.collision.radius
-                d1 += 1
+            if (self.world.time - self.states.created < 1.5 or
+               self.world.time - other.states.created < 1.5):
+                d1 += 0.1
+                d1 /= 5.0
+                self.position.position[0] += nx / d1 * 0.4 
+                self.position.position[1] += ny / d1 * 0.4 
+                other.movement.velocity[0] -= nx / d1 * 3.0 
+                other.movement.velocity[1] -= ny / d1 * 3.0 
+                self.movement.velocity *= 0.5
+                other.movement.velocity *= 0.5
             
             self.movement.velocity *= 0.8
             self.movement.velocity[0] += nx / d1 * 3.0 * other.collision.radius / self.collision.radius
@@ -427,6 +456,7 @@ class Asteroid(BlasteroidsEntity):
             
             px1, py1 = self.position.position
             px2, py2 = other.position.position
+            """
             if d < 5:
                 total_radius = math.sqrt(self.collision.radius**2 + other.collision.radius**2)
                 if total_radius > 60: return
@@ -444,41 +474,43 @@ class Asteroid(BlasteroidsEntity):
                     other.collision.radius = 0
                     self.delete()
                     other.delete()
+            """
             return
         if isinstance(other, Shot):
             if other.collision.radius == 0: return
             if self.collision.radius == 0: return
             other.collision.radius = 0
-            if self.collision.radius > 12:
+            if self.collision.radius > 6:
                 total_area = 3.1415927 * (self.collision.radius ** 2) 
-                total_area -= 10
+                total_area -= 2
                 count = 0
-                for i in range(10):
-                    if total_area < 2: break
+                for i in range(50):
+                    if total_area < 4: break
                     min_area = 3.1415927 * 8 * 8
                     if min_area < total_area - 10:
-                        chunk_size = random.gauss(self.collision.radius/6,self.collision.radius/4)
-                        if chunk_size < 6: continue
+                        chunk_size = random.gauss(self.collision.radius/8,self.collision.radius/8)
+                        if chunk_size < 4: continue
                     else:
                         chunk_size = math.sqrt(total_area) / 3.1415927 - 0.5
-                        if chunk_size < 6: break
+                        if chunk_size < 4: break
                     chunk_area = 3.1415927 * (chunk_size**2)
             
                     if chunk_area > total_area: continue
                     total_area -= chunk_area
                     px, py = self.position.position
                     angle = random.uniform(0,360)
-                    offset = random.gauss(self.collision.radius/2,self.collision.radius/4)
-                    px += math.cos(angle) * offset
-                    py += math.sin(angle) * offset
+                    offset = random.uniform(2+chunk_size/2,self.collision.radius/2)
+                    dx,dy = math.cos(angle) * offset, math.sin(angle) * offset
+                    px += dx
+                    py += dy
                     ppos = (px, py) 
                     Asteroid(self.world, chunk_size, ppos, 
-                        self.movement.velocity, self.award.points * 2)
+                        self.movement.velocity + Vec2d(dx,dy) * 10, self.award.points * 2)
                     count += 1
                 if random.gauss(0,total_area) > 8: count += 1
                 if random.gauss(0,total_area) > 8: count += 1
                 if random.gauss(0,total_area) > 8: count += 1
-                for i in range(random.randint(0,int(count/2))):
+                for i in range(random.randint(0,int(count/4))):
                     Collectable(self.world,None,self.position.position,self.movement.velocity)
                 random.choice(self.HIT_SOUNDS).play()
             else:
@@ -501,8 +533,8 @@ class Shot(grease.Entity):
     """
 
     COLLIDE_INTO_MASK = 0x8
-    SPEED = 150
-    TIME_TO_LIVE = 1.70 # seconds
+    SPEED = 50
+    TIME_TO_LIVE = 2.70 # seconds
     
     def __init__(self, world, shooter, angle, offset2sz = 0, spread = 0):
         offset = geometry.Vec2d(0, shooter.collision.radius)
@@ -515,7 +547,7 @@ class Shot(grease.Entity):
         
         self.states.exploded = False
         
-        self.position.position = shooter.position.position + offset * (3.5-abs(offset2sz/16)) + offset2 * vertical_sep 
+        self.position.position = shooter.position.position + offset * (2.5-abs(offset2sz/16)) + offset2 * vertical_sep 
         self.movement.velocity = (
             offset.normalized() * self.SPEED + shooter.movement.velocity)
         self.movement.accel = offset2 * -offset2sz / 2.0 + offset.normalized() * (40.0 - abs(offset2sz)*5) / spreadn

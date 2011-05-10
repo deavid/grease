@@ -177,7 +177,7 @@ cdef class BroadSweepAndPrune:
         self._by_y = None
         self.stepn = 0
         self._collision_pairs = None
-        self.maxresolution = 3
+        self.maxresolution = 5
         self.resolution = self.maxresolution
      
     def __init__(self, collision_component='collision'):
@@ -308,13 +308,23 @@ cdef class BroadSweepAndPrune:
         ky = (y - self.miny) * self.resolution / (self.maxy-self.miny)
         return ky
     
+    cdef float getinvfloatkx(self, kx):
+        cdef float x
+        x = self.minx + kx * (self.maxx-self.minx) / self.resolution
+        return x
+        
+    cdef float getinvfloatky(self, ky):
+        cdef float y
+        y = self.miny + ky * (self.maxy-self.miny) / self.resolution
+        return y
+    
     cdef int getkx(self, x):
         return round(self.getfloatkx(x))
         
     cdef int getky(self, y):
         return round(self.getfloatky(y))
         
-    cdef int update_partial_pairs(self,oxy,pidx):
+    cdef object update_partial_pairs(self,oxy,pidx):
         add_pair = self._collision_pairs.add
         cdef unsigned int mask1
         cdef unsigned int mask2
@@ -327,22 +337,22 @@ cdef class BroadSweepAndPrune:
                 d2 = oxy[j].entity
                 mask1 = (d1.collision.from_mask & d2.collision.into_mask)
                 mask2 = (d2.collision.from_mask & d1.collision.into_mask)
-                if (mask1 | mask2) == 0: continue
                 viewed += 1
+                if (mask1 | mask2) == 0: continue
                 if d1.entity_id not in pidx:
                     pidx[d1.entity_id] = set([])
                 if d2.entity_id not in pidx:
                     pidx[d2.entity_id] = set([])
-                if d2.entity_id not in pidx[d1.entity_id]:
-                    pidx[d1.entity_id].add(d2.entity_id)
-                    pidx[d2.entity_id].add(d1.entity_id)
-                    pair = Pair(d1, d2)
-                    if pair not in self._collision_pairs:
-                        add_pair( pair )
-                        added += 1
-        return viewed
+                if d2.entity_id in pidx[d1.entity_id]: continue
+                if d1.entity_id in pidx[d2.entity_id]: continue
+                pidx[d1.entity_id].add(d2.entity_id)
+                #pidx[d2.entity_id].add(d1.entity_id)
+                pair = Pair(d1, d2)
+                add_pair( pair )
+                added += 1
+        return added, viewed
                         
-    cdef compute_hash_index(self, iterator):
+    cdef compute_hash_index(self, iterator, newrange):
         cdef float px
         cdef float py
         cdef float kpx
@@ -351,74 +361,135 @@ cdef class BroadSweepAndPrune:
         cdef float ky1
         cdef float distance
         
-        pairs_in = []
         objk = {}
-        self.minx = 999
-        self.maxx = -999
-        self.miny = 999
-        self.maxy = -999
-        self.totalarea = 0
-        self.usedarea = 0
-        for data in iterator:
-            kx = [ data.aabb.left, data.aabb.right ]
-            kx.sort()
-            ky = [ data.aabb.bottom, data.aabb.top ]
-            ky.sort()
-            if kx[0] < self.minx: self.minx = kx[0]
-            if kx[1] > self.maxx: self.maxx = kx[1]
-            if ky[0] < self.miny: self.miny = ky[0]
-            if ky[1] > self.maxy: self.maxy = ky[1]
-            self.usedarea += (kx[1] - kx[0]) * (ky[1] - ky[0])
+        if newrange is None:
+            self.minx = 999
+            self.maxx = -999
+            self.miny = 999
+            self.maxy = -999
+            self.totalarea = 0
+            self.usedarea = 0
+            for data in iterator:
+                kx = [ data.aabb.left, data.aabb.right ]
+                ky = [ data.aabb.bottom, data.aabb.top ]
+                if kx[0] < self.minx: self.minx = kx[0]
+                if kx[1] > self.maxx: self.maxx = kx[1]
+                if ky[0] < self.miny: self.miny = ky[0]
+                if ky[1] > self.maxy: self.maxy = ky[1]
+        else:
+            self.minx = newrange[0]
+            self.maxx = newrange[1]
+            self.miny = newrange[2]
+            self.maxy = newrange[3]
+            self.usedarea = 0
+        createdrange = (self.minx, self.maxx, self.miny, self.maxy)
         self.totalarea = (self.maxx - self.minx) * (self.maxy - self.miny)
+        assert(self.totalarea > 0)
         #shape_radius = self.resolution * 0.7071
         added = 0
         for data in iterator:
-            kx = [ self.getkx(data.aabb.left ), self.getkx(data.aabb.right) ]
-            kx.sort()
-            ky = [ self.getky(data.aabb.bottom ), self.getky(data.aabb.top) ]
-            ky.sort()
-            for x in range(kx[0], kx[1] + 1):
+            kx = [ data.aabb.left, data.aabb.right ]
+            ky = [ data.aabb.bottom, data.aabb.top ]
+            if kx[0] < self.minx: kx[0] = self.minx
+            if kx[1] < self.minx: kx[1] = self.minx
+            if kx[0] > self.maxx: kx[0] = self.maxx
+            if kx[1] > self.maxx: kx[1] = self.maxx
+            if ky[0] < self.miny: ky[0] = self.miny
+            if ky[1] < self.miny: ky[1] = self.miny
+            if ky[0] > self.maxy: ky[0] = self.maxy
+            if ky[1] > self.maxy: ky[1] = self.maxy
+            area = (kx[1] - kx[0]) * (ky[1] - ky[0])
+            try:
+                assert(area >= 0)
+            except AssertionError:
+                print "AssertionError: (%.5f - %.5f) * (%.5f - %.5f) = %.5f" % (kx[1],kx[0],ky[1],ky[0],area)
+                continue
+            if area == 0: continue
+            self.usedarea += area
+            
+            kxp = [ self.getkx(x) for x in kx ]
+            kyp = [ self.getky(y) for y in ky ]
+            pos = None
+            """try:
+                px,py = data.entity.position.position
+                pos = (px,py)
+            except Exception:
+                pos = None
+            """    
+            for x in range(kxp[0], kxp[1] + 1):
                 if x not in objk:
                     objk[x] = {}
-                for y in range(ky[0], ky[1] + 1):
-                    """
-                    px, py = data.entity.position.position
-                    kpx, kpy = (self.getfloatkx(px), self.getfloatky(py))
-                    kx1 = (kx[0] + kx[1]) / 2.0
-                    ky1 = (ky[0] + ky[1]) / 2.0
-                    distance = math.sqrt((kpx - kx1) ** 2 + (kpy - ky1) ** 2)
-                    if  distance > (self.getfloatkx(data.entity.collision.radius) + self.getfloatky(data.entity.collision.radius) / 2.0) + 0.5:
-                        continue
-                    """
+                validy = []
+                for y in range(kyp[0], kyp[1] + 1):
                     if y not in objk[x]:
                         objk[x][y] = []
-                    elif len(objk[x][y]) == 1:
-                        pairs_in.append( (x,y) )
                     objk[x][y].append(data)
                     added += 1
         #if self.stepn % 30 == 0:
-        #    print added
-        return pairs_in,objk
+        #    print "Added:", added
+        return objk, createdrange, added
 
-    cdef int _c_update_pairs(self,iterator, pidx, depth = 0) except -1:
+
+    # ********** MAIN COLLISION (RECURSIVE) FUNCTION **************
+    cdef object _c_update_pairs(self,iterator, pidx, depth = 0, newrange = None, pdict = None):
+        cdef int forbid_zoom_in 
+        cdef int forbid_zoom_in_msg
         viewed = 0
+        added = 0
         prevused = self.usedarea
-        pairs_in, objk = self.compute_hash_index(iterator)
-        if not pairs_in: return 1
+        objk, createdrange, objadded = self.compute_hash_index(iterator, newrange)
+        if depth == 0: pdict = {"maxdepth":0,"objadded":0}
+        if depth > pdict["maxdepth"]: pdict["maxdepth"] = depth
+        pdict["objadded"] += objadded
         used = self.usedarea
         total = self.totalarea
         resolution = self.resolution
+        
+        if used > total and depth > 2 :
+            forbid_zoom_in = True
+        else:
+            forbid_zoom_in = False
+        forbid_zoom_in_msg = False
         if not prevused: prevused = used * 2
-        for x,y in pairs_in:
-            oxy = objk[x][y]
-            if used < total and used < prevused and depth < 2 and len(oxy) >= 5:
-                #self.resolution = max(7,len(oxy))
-                viewed+=self._c_update_pairs(oxy,pidx, depth + 1)
-            else:
-                viewed+=self.update_partial_pairs(oxy,pidx)
+        for x, ox in objk.iteritems():
+            for y, oxy in ox.iteritems():
+                #if used < total and used < prevused and depth == 0 and len(oxy) >= 4 + depth:
+                nsize = len(oxy)
+                if nsize < 2: continue
+                zoom_in = False
+                if nsize >= 3 + depth: zoom_in = True
+            
+                if zoom_in and forbid_zoom_in:
+                    forbid_zoom_in_msg = True
+                if zoom_in and not forbid_zoom_in:
+                    self.minx, self.maxx, self.miny, self.maxy = createdrange
+                    newrange1 = (self.getinvfloatkx(x-0.5), self.getinvfloatkx(x+0.5), self.getinvfloatky(y-0.5), self.getinvfloatky(y+0.5))
+                    #print "Old range: %.5f, %.5f, %.5f, %.5f" % (createdrange)
+                    #print "Calculated range (%d,%d):" % (x,y) +  " %.5f, %.5f, %.5f, %.5f" % (newrange1)
+                
+                    self.resolution = 2
+                    a,v = self._c_update_pairs(oxy,pidx, depth + 1, newrange1, pdict)
+                    added += a
+                    viewed+= v
+                    self.resolution = resolution
+                else:
+                    if nsize > 2:
+                        if nsize not in pdict: pdict[nsize] = 0
+                        pdict[nsize]+=1
+                    a,v = self.update_partial_pairs(oxy,pidx)
+                    added+=a
+                    viewed+=v
+        #if depth == 0:
+        #    print ", ".join(["%s:%d"% (k,v) for k,v in sorted(pdict.iteritems())]), "Add", added, "View +%d" %( viewed - added)
+        #else:
+        #    #if forbid_zoom_in_msg:    
+        #    #    print "Avoiding zooming to depth %d. Area full." % (depth+1)
+
         #if self.stepn % 5 == 0 and depth == 0:
         #    print resolution, depth, viewed, "%d / %d" % (used, total)
-        return viewed
+        return added, viewed
+        
+        
         
     cdef int _c_collision_pairs(self) except -1:
         """Set of candidate collision pairs for this timestep"""
