@@ -1,27 +1,33 @@
 import random
 import pyglet
-from pyglet.gl import *
+import pyglet.gl as pgl
 from numpy import *
 import itertools as it
 import time
 
-window = pyglet.window.Window(resizable=True,vsync=False)
+from grease.cython import arraygl
+
+from OpenGL.GL import *
+from OpenGL.GLUT import *
+from OpenGL.GLU import *
+    
+window = pyglet.window.Window(resizable=True,vsync=True)
 context = window.context
 config = context.config
 
 def vertexlist(points,data='xyrgb'):
     assert(data == 'xyrgb')
-    size = points.shape[0]
     p_x = data.index('x')
     p_y = data.index('y')
     p_r = data.index('r')
     p_g = data.index('g')
     p_b = data.index('b')
-    x = points[:,p_x]
-    y = points[:,p_y]
-    r = points[:,p_r]
-    g = points[:,p_g]
-    b = points[:,p_b]
+    x = hstack((points[:,p_x] * 1.5, points[:,p_x] * 1.3, points[:,p_x]))
+    y = hstack((points[:,p_y] * 1.5, points[:,p_y] * 1.3, points[:,p_y]))
+    r = hstack((points[:,p_r] * 0.4, points[:,p_r] * 0.6, points[:,p_r]))
+    g = hstack((points[:,p_g] * 0.4, points[:,p_g] * 0.6, points[:,p_g]))
+    b = hstack((points[:,p_b] * 0.4, points[:,p_b] * 0.6, points[:,p_b]))
+    size = x.shape[0]
     pxy = vstack((x,y)).transpose()
     p_xy = pxy.ravel()
     prgb = vstack((r,g,b)).transpose()
@@ -35,14 +41,15 @@ def vertexlist(points,data='xyrgb'):
             )
         )
     
-def circle(steps = 32, radius = 1):
+def circle(steps = 32, radius = 1, c = 'rgb'):
     i = linspace(0,2*pi,steps+1)
-    x = cos(i) * radius
-    y = sin(i) * radius
+    x = cos(i) * ((cos(i*steps/4)/4.0+0.75)*radius) 
+    y = sin(i) * ((cos(i*steps/4)/4.0+0.75)*radius)
     g = cos(i*3) *0.3 + 0.6
     b = sin(i*3) *0.3 + 0.4
     r = 1 - b
-    return vstack((x,y,r,g,b)).transpose()
+    lc = [r,g,b]
+    return vstack((x,y,lc[c.index('r')],lc[c.index('g')],lc[c.index('b')])).transpose()
 
 
 
@@ -51,7 +58,7 @@ def circle(steps = 32, radius = 1):
 @window.event
 def on_resize(width, height):
     glViewport(0, 0, width, height)
-    glMatrixMode(gl.GL_PROJECTION)
+    glMatrixMode(pgl.gl.GL_PROJECTION)
     glLoadIdentity()
     
     aspect = float(width) / float(height)
@@ -59,7 +66,7 @@ def on_resize(width, height):
         glOrtho(-1,1, -1/aspect, 1/aspect, -1, 1)
     else:
         glOrtho(-1*aspect,1*aspect, -1, 1, -1, 1)
-    glMatrixMode(gl.GL_MODELVIEW)
+    glMatrixMode(pgl.gl.GL_MODELVIEW)
     return pyglet.event.EVENT_HANDLED
 
 
@@ -136,6 +143,7 @@ class Entity(BaseEntity):
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
+    displaylist = None
     def __init__(self, *args, **kwargs):
         BaseEntity.__init__(self, *args, **kwargs)
         
@@ -156,22 +164,39 @@ class Entity(BaseEntity):
             else:
                 r = r1
             """
+        if not cls.displaylist:
+            glLoadIdentity()
+            cls.displaylist = glGenLists(1)
+            glNewList(cls.displaylist,GL_COMPILE)
+            cls.shape.draw()
+            glEndList()
+            
+            
+        arraygl.draw_array(cls.displaylist,X,Y,R)
+        return
         for x, y ,r in it.izip(X,Y,R):
+            arraygl.draw_list(cls.displaylist,x,y,r)
+            """
             glLoadIdentity()
             glTranslatef(x,y,0)
             glScalef(r,r,1)
-            cls.shape.draw()
+            #cls.shape.draw()
+            glCallList(cls.displaylist) # 5ms / 1000
+            """
     
 
     @classmethod
     def update(cls,dt, depth=0):
-        if depth < 2: 
+        if depth < 0: 
             cls.update(dt/2.0, depth+1)
             cls.update(dt/2.0, depth+1)
             return
         x,y,dx,dy,r = cls.array("x,y,dx,dy,r")
         x += dx * dt
         y += dy * dt
+        dx -= x * dt
+        dy -= y * dt
+        return
         cd = sqrt(x**2 + y**2)
         xn = x / cd
         yn = y / cd
@@ -180,6 +205,7 @@ class Entity(BaseEntity):
         dy -= yn * 12.0 * dt * r
         dx /= 1.01**dt
         dy /= 1.01**dt
+        return 
         x1, x2 = ix_(x,x)
         y1, y2 = ix_(y,y)
         r1, r2 = ix_(r,r)
@@ -198,7 +224,9 @@ class Entity(BaseEntity):
         h = sqrt(d2[pairs_t[0],pairs_t[1]])
         rr = sqrt(r2[pairs_t[0],pairs_t[1]])
         f = h/rr/2.0
-        f[f<0.01]=0.01
+        corr = 30
+        limit = 0.25
+        f[f<limit]=limit
         x1 = x[pairs_t[0]]
         y1 = y[pairs_t[0]]
         dx1 = dx[pairs_t[0]]
@@ -217,10 +245,10 @@ class Entity(BaseEntity):
         dy[pairs_t[0]] += jy
         dx[pairs_t[1]] -= jx
         dy[pairs_t[1]] -= jy
-        x[pairs_t[0]] += jx / 100.0 
-        y[pairs_t[0]] += jy / 100.0 
-        x[pairs_t[1]] -= jx / 100.0 
-        y[pairs_t[1]] -= jy / 100.0 
+        x[pairs_t[0]] += jx / corr
+        y[pairs_t[0]] += jy / corr
+        x[pairs_t[1]] -= jx / corr
+        y[pairs_t[1]] -= jy / corr
         global draw_times
         if draw_times < 2:
             draw_times+=1
@@ -253,13 +281,20 @@ class Entity(BaseEntity):
             dx[p2] *= t
             dy[p2] *= t
         """
-for i in range(40):
+for i in range(10000):
     e = Entity()
-    e.x = random.uniform(-1,1)
-    e.y = random.uniform(-1,1)
-    e.r = random.uniform(0.035,0.06)
-    e.dx = random.uniform(-0.1,0.1)
-    e.dy = random.uniform(-0.1,0.1)
+    a = random.uniform(0,360)
+    d = random.normal(0.0,0.3)
+    e.x = cos(a) * d
+    e.y = sin(a) * d
+    t = 0.02
+    e.r = random.normal(t,t) 
+    if e.r < 0.01: e.r = 0.01
+
+    a = random.uniform(0,360)
+    d = random.normal(0.5,1.5)
+    e.dx = cos(a) * d
+    e.dy = sin(a) * d
 
 #print Entity.components
 #print Entity.get_data()
@@ -295,9 +330,14 @@ def fps(dt):
             100*drawing_time/elapsed, 1000*drawing_time/draw_times, 100*updating_time/elapsed)
     start_time = time.time()
     drawing_time =  updating_time = draw_times = 0
-
+"""
+xlist = linspace(3,12,33)
+n = arange(33)
+print xlist.sum(), n.shape, xlist.shape
+print arraygl.numpylist(n,xlist)
+"""
 pyglet.clock.schedule_interval(fps, 1)    
 #pyglet.clock.schedule(update)    
-pyglet.clock.schedule_interval(update, 1/90.0)    
+pyglet.clock.schedule_interval(update, 1/65.0)    
 fps(0)
 pyglet.app.run()

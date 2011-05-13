@@ -925,9 +925,12 @@ class Game(BaseWorld):
     """Main game world and mode"""
 
     def __init__(self, player_name=""):
-        BaseWorld.__init__(self)
+        BaseWorld.__init__(self, 10)
         self.player_name = player_name
         self.is_multiplayer = self.player_name != ""
+        self.clock.unschedule(self.step)
+        self.clock.schedule(self.step)
+
 
     def configure(self):
         BaseWorld.configure(self)
@@ -944,8 +947,9 @@ class Game(BaseWorld):
 def main():
     """Initialize and run the game"""
     global window
-    window = mode.ManagerWindow()
-    window.push_mode(TitleScreen())
+    window = mode.ManagerWindow(vsync=False)
+    window.set_vsync(False)
+    window.push_mode(TitleScreen(20))
     pyglet.app.run()
 
 if __name__ == '__main__':

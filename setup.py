@@ -6,10 +6,30 @@ import os
 import sys
 import shutil
 from distutils.core import setup, Extension
+import platform
 
 from Cython.Distutils import build_ext as cython_build_ext
-
 srcdir = os.path.dirname(__file__)
+system_platform = platform.system().lower()
+OPENGL_LIBNAME = None
+GLUT_LIBNAME = None
+GLU_LIBNAME = None
+
+if system_platform == "linux":
+    OPENGL_LIBNAME = "GL"
+    GLUT_LIBNAME = "GLU"
+    GLU_LIBNAME = "glut"
+elif system_platform == "windows":
+    OPENGL_LIBNAME = "opengl32"  # glaux ?
+    GLUT_LIBNAME = "glut"
+    GLU_LIBNAME = "glu32"
+else:
+    print "PANIC: Unknown platform %s." % repr(system_platform)
+    raise ValueError, "Platform unknown!"
+    
+
+
+    
 
 def read(fname):
     return open(os.path.join(srcdir, fname)).read()
@@ -38,6 +58,9 @@ ext_modules.append(Extension("grease.cython.controller.integrator",
 
 ext_modules.append(Extension("grease.cython.collision", 
     ["grease/cython/collision.pyx"]))
+
+ext_modules.append(Extension("grease.cython.arraygl", 
+    ["grease/cython/arraygl.pyx"], libraries = [OPENGL_LIBNAME]))
 
 setup(
     name='grease',
