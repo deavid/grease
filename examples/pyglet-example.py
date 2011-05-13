@@ -1,4 +1,4 @@
-import random
+import random as pyrandom
 import pyglet
 import pyglet.gl as pgl
 from numpy import *
@@ -48,8 +48,10 @@ def circle(steps = 32, radius = 1, c = 'rgb'):
     g = cos(i*3) *0.3 + 0.6
     b = sin(i*3) *0.3 + 0.4
     r = 1 - b
-    lc = [r,g,b]
-    return vstack((x,y,lc[c.index('r')],lc[c.index('g')],lc[c.index('b')])).transpose()
+    c0 = zeros(x.shape[0])
+    c1 = ones(x.shape[0])
+    lc = {'r' : r,'g' : g,'b' : b, '0' : c0, '1': c1}
+    return vstack((x,y,lc[c[0]],lc[c[1]],lc[c[2]])).transpose()
 
 
 
@@ -71,14 +73,16 @@ def on_resize(width, height):
 
 
 
+entity_type_counter = it.count()
 class BaseEntity(object):
     _id_counter = it.count()
     _last_id = -1
     _var_counter = it.count()
     _min_resize = 8
-    components = "n x y r dx dy".split()
+    components = "n t x y r dx dy".split()
     _data_width = len(components)
     _data_array = zeros( (_min_resize, _data_width) )*nan
+    entitytype  = entity_type_counter.next()
 
     @classmethod
     def get_id(cls):
@@ -114,6 +118,7 @@ class BaseEntity(object):
         self.id = self.get_id()
         Entity.set_entity(self.id,zeros(self._data_width))
         self.n = self.id
+        self.t = self.entitytype
         for k,v in list(kwargs.iteritems()):
             if k in self.components: 
                 setattr(self,k,v)
@@ -133,23 +138,37 @@ class BaseEntity(object):
             return self._data_array[self.id][i]
         else:
             return object.__getattr__(self,k)
+            
     @classmethod
     def array(cls, klist):
         return [ cls._data_array[:cls._last_id+1,cls.components.index(k)] for k in klist.split(",") ]
+
+    @classmethod
+    def idx(cls):
+        _where = cls._data_array[:cls._last_id+1, cls.components.index('t')] == cls.entitytype 
+        return _where
+
+    @classmethod
+    def farray(cls, klist):
+        _where = cls.idx()
+    
+        return [ cls._data_array[_where,cls.components.index(k)] for k in klist.split(",") ]
         
 class Entity(BaseEntity):
+    entitytype  = entity_type_counter.next()
     centerpoint = array( (0,0,0,0,0) )
     mycircle = vstack((centerpoint,circle(24)))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
     displaylist = None
+    entitytype  = entity_type_counter.next()
     def __init__(self, *args, **kwargs):
         BaseEntity.__init__(self, *args, **kwargs)
         
     @classmethod
     def draw(cls):
-        X,Y,R = cls.array("x,y,r")
+        X,Y,R = cls.farray("x,y,r")
         """
         D = X ** 2 + Y ** 2
         
@@ -191,11 +210,13 @@ class Entity(BaseEntity):
             cls.update(dt/2.0, depth+1)
             cls.update(dt/2.0, depth+1)
             return
-        x,y,dx,dy,r = cls.array("x,y,dx,dy,r")
-        x += dx * dt
-        y += dy * dt
-        dx -= x * dt
-        dy -= y * dt
+        x,y,dx,dy,r = cls.farray("x,y,dx,dy,r")
+        T,X,Y,DX,DY,R = cls.array("t,x,y,dx,dy,r")
+        i = cls.idx()
+        X[i] += dx * dt
+        Y[i] += dy * dt
+        DX[i] -= x * dt
+        DY[i] -= y * dt
         return
         cd = sqrt(x**2 + y**2)
         xn = x / cd
@@ -281,15 +302,47 @@ class Entity(BaseEntity):
             dx[p2] *= t
             dy[p2] *= t
         """
-for i in range(10000):
-    e = Entity()
+
+class EntityRed(Entity):
+    entitytype  = entity_type_counter.next()
+    centerpoint = array( (0,0,0,0,0) )
+    mycircle = vstack((centerpoint,circle(24,c='1b0')))
+    shape = pyglet.graphics.Batch()
+    shape_count, shape_data = vertexlist(mycircle)
+    shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
+    displaylist = None
+
+class EntityGreen(Entity):
+    entitytype  = entity_type_counter.next()
+    centerpoint = array( (0,0,0,0,0) )
+    mycircle = vstack((centerpoint,circle(24,c='01g')))
+    shape = pyglet.graphics.Batch()
+    shape_count, shape_data = vertexlist(mycircle)
+    shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
+    displaylist = None
+    
+
+class EntityBlue(Entity):
+    entitytype  = entity_type_counter.next()
+    centerpoint = array( (0,0,0,0,0) )
+    mycircle = vstack((centerpoint,circle(24,c='0r1')))
+    shape = pyglet.graphics.Batch()
+    shape_count, shape_data = vertexlist(mycircle)
+    shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
+    displaylist = None
+    
+entity_types=[Entity,EntityGreen, EntityRed, EntityBlue]
+
+for i in range(2000):
+    EType = pyrandom.choice(entity_types)    
+    e = EType()
     a = random.uniform(0,360)
     d = random.normal(0.0,0.3)
     e.x = cos(a) * d
     e.y = sin(a) * d
-    t = 0.02
+    t = 0.06
     e.r = random.normal(t,t) 
-    if e.r < 0.01: e.r = 0.01
+    if e.r < 0.02: e.r = 0.02
 
     a = random.uniform(0,360)
     d = random.normal(0.5,1.5)
@@ -305,7 +358,9 @@ def on_draw():
     t1 = time.time()
     draw_times += 1
     glClear(GL_COLOR_BUFFER_BIT)
-    Entity.draw()
+    
+    for EType in entity_types:
+        EType.draw()
     
     t2 = time.time()
     drawing_time += t2-t1
@@ -316,8 +371,8 @@ def on_draw():
 def update(dt):
     global updating_time
     t1 = time.time()
-    
-    Entity.update(dt)
+    for EType in entity_types:
+        EType.update(dt)
     
     t2 = time.time()
     updating_time += t2-t1
