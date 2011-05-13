@@ -19,8 +19,12 @@ if system_platform == "linux":
     OPENGL_LIBNAME = "GL"
     GLUT_LIBNAME = "GLU"
     GLU_LIBNAME = "glut"
+elif system_platform == "darwin":
+    OPENGL_LIBNAME = "GL"
+    GLUT_LIBNAME = "GLU"
+    GLU_LIBNAME = "glut"
 elif system_platform == "windows":
-    OPENGL_LIBNAME = "opengl32"  # glaux ?
+    OPENGL_LIBNAME = "opengl32"  # what is glaux ?
     GLUT_LIBNAME = "glut"
     GLU_LIBNAME = "glu32"
 else:
