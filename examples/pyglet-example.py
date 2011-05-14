@@ -11,7 +11,7 @@ from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
     
-window = pyglet.window.Window(resizable=True,vsync=False)
+window = pyglet.window.Window(resizable=True,vsync=True)
 context = window.context
 config = context.config
 
@@ -348,9 +348,10 @@ for i in range(1000):
 #print Entity.components
 #print Entity.get_data()
 fps_display = pyglet.clock.ClockDisplay()
+frame_time = time.time()
 @window.event
 def on_draw():
-    global drawing_time, draw_times
+    global drawing_time, draw_times, frame_time
     t1 = time.time()
     draw_times += 1
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -360,6 +361,14 @@ def on_draw():
     
     t2 = time.time()
     drawing_time += t2-t1
+    FPS = 70
+    MIN_NAP = 0.5 # ms
+    NAP_OFFSET = 0.5 # ms
+    frame_delta = time.time() - frame_time + NAP_OFFSET/1000.0
+    desired_delta = 1.0/FPS
+    naptime = max(desired_delta - frame_delta, MIN_NAP/1000.0)
+    time.sleep(naptime)
+    frame_time = time.time()
 
 # vertex: v2f: vertexes XY in float
 # color: c4f : RGBA in float
