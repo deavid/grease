@@ -11,7 +11,7 @@ from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
     
-window = pyglet.window.Window(resizable=True,vsync=True)
+window = pyglet.window.Window(resizable=True,vsync=False)
 context = window.context
 config = context.config
 
@@ -22,11 +22,11 @@ def vertexlist(points,data='xyrgb'):
     p_r = data.index('r')
     p_g = data.index('g')
     p_b = data.index('b')
-    x = hstack((points[:,p_x] * 1.5, points[:,p_x] * 1.3, points[:,p_x]))
-    y = hstack((points[:,p_y] * 1.5, points[:,p_y] * 1.3, points[:,p_y]))
-    r = hstack((points[:,p_r] * 0.4, points[:,p_r] * 0.6, points[:,p_r]))
-    g = hstack((points[:,p_g] * 0.4, points[:,p_g] * 0.6, points[:,p_g]))
-    b = hstack((points[:,p_b] * 0.4, points[:,p_b] * 0.6, points[:,p_b]))
+    x = hstack((points[:,p_x], points[:,p_x] * 1.3, points[:,p_x] * 1.5))
+    y = hstack((points[:,p_y], points[:,p_y] * 1.3, points[:,p_y] * 1.5))
+    r = hstack((points[:,p_r], points[:,p_r] * 0.6, points[:,p_r] * 0.4))
+    g = hstack((points[:,p_g], points[:,p_g] * 0.6, points[:,p_g] * 0.4))
+    b = hstack((points[:,p_b], points[:,p_b] * 0.6, points[:,p_b] * 0.4))
     size = x.shape[0]
     pxy = vstack((x,y)).transpose()
     p_xy = pxy.ravel()
@@ -79,7 +79,7 @@ class BaseEntity(object):
     _last_id = -1
     _var_counter = it.count()
     _min_resize = 8
-    components = "n t x y r dx dy".split()
+    components = "n t x y z w r dx dy".split()
     _data_width = len(components)
     _data_array = zeros( (_min_resize, _data_width) )*nan
     entitytype  = entity_type_counter.next()
@@ -168,7 +168,7 @@ class Entity(BaseEntity):
         
     @classmethod
     def draw(cls):
-        X,Y,R = cls.farray("x,y,r")
+        X,Y,Z,W,R = cls.farray("x,y,z,w,r")
         """
         D = X ** 2 + Y ** 2
         
@@ -191,7 +191,7 @@ class Entity(BaseEntity):
             glEndList()
             
             
-        arraygl.draw_array(cls.displaylist,X,Y,R)
+        arraygl.draw_array(cls.displaylist,X,Y,Z,W,R)
         return
         for x, y ,r in it.izip(X,Y,R):
             arraygl.draw_list(cls.displaylist,x,y,r)
@@ -305,8 +305,8 @@ class Entity(BaseEntity):
 
 class EntityRed(Entity):
     entitytype  = entity_type_counter.next()
-    centerpoint = array( (0,0,0,0,0) )
-    mycircle = vstack((centerpoint,circle(24,c='1b0')))
+    centerpoint = array( (0,0,1,0,0) )
+    mycircle = vstack((centerpoint,circle(24,c='r00')))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
@@ -314,8 +314,8 @@ class EntityRed(Entity):
 
 class EntityGreen(Entity):
     entitytype  = entity_type_counter.next()
-    centerpoint = array( (0,0,0,0,0) )
-    mycircle = vstack((centerpoint,circle(24,c='01g')))
+    centerpoint = array( (0,0,0,1,0) )
+    mycircle = vstack((centerpoint,circle(24,c='0g0')))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
@@ -324,22 +324,34 @@ class EntityGreen(Entity):
 
 class EntityBlue(Entity):
     entitytype  = entity_type_counter.next()
-    centerpoint = array( (0,0,0,0,0) )
-    mycircle = vstack((centerpoint,circle(24,c='0r1')))
+    centerpoint = array( (0,0,0,0,1) )
+    mycircle = vstack((centerpoint,circle(24,c='00b')))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
     displaylist = None
+        
+def entityblue_update(cls,dt, depth=0):
+    cls.parent_update(dt,depth)
+    W, = cls.array("w")
+    i = cls.idx()
+    W[i] += 90 * dt
+    
+EntityBlue.parent_update = EntityBlue.update
+EntityBlue.update = classmethod(entityblue_update)
     
 entity_types=[Entity,EntityGreen, EntityRed, EntityBlue]
 
-for i in range(2000):
+for i in range(1000):
     EType = pyrandom.choice(entity_types)    
     e = EType()
     a = random.uniform(0,360)
     d = random.normal(0.0,0.3)
     e.x = cos(a) * d
     e.y = sin(a) * d
+    e.z = random.uniform(-0.5,0.5)
+    e.w = a
+    
     t = 0.06
     e.r = random.normal(t,t) 
     if e.r < 0.02: e.r = 0.02
@@ -357,7 +369,7 @@ def on_draw():
     global drawing_time, draw_times
     t1 = time.time()
     draw_times += 1
-    glClear(GL_COLOR_BUFFER_BIT)
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     
     for EType in entity_types:
         EType.draw()
@@ -395,4 +407,6 @@ pyglet.clock.schedule_interval(fps, 1)
 #pyglet.clock.schedule(update)    
 pyglet.clock.schedule_interval(update, 1/65.0)    
 fps(0)
+glEnable(GL_DEPTH_TEST)
+
 pyglet.app.run()
