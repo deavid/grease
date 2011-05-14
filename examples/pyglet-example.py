@@ -83,7 +83,8 @@ class BaseEntity(object):
     _data_width = len(components)
     _data_array = zeros( (_min_resize, _data_width) )*nan
     entitytype  = entity_type_counter.next()
-
+    index = None
+    
     @classmethod
     def get_id(cls):
         newid = cls._id_counter.next()
@@ -138,7 +139,7 @@ class BaseEntity(object):
             return self._data_array[self.id][i]
         else:
             return object.__getattr__(self,k)
-            
+                    
     @classmethod
     def array(cls, klist):
         return [ cls._data_array[:cls._last_id+1,cls.components.index(k)] for k in klist.split(",") ]
@@ -149,10 +150,16 @@ class BaseEntity(object):
         return _where
 
     @classmethod
+    def idx_update(cls):
+        cls.index = cls.idx().copy()
+
+    @classmethod
     def farray(cls, klist):
         _where = cls.idx()
     
         return [ cls._data_array[_where,cls.components.index(k)] for k in klist.split(",") ]
+        
+
         
 class Entity(BaseEntity):
     entitytype  = entity_type_counter.next()
@@ -168,21 +175,6 @@ class Entity(BaseEntity):
         
     @classmethod
     def draw(cls):
-        X,Y,Z,W,R = cls.farray("x,y,z,w,r")
-        """
-        D = X ** 2 + Y ** 2
-        
-        dmax = 0.5
-        dmax_2 = dmax/2.0
-        #assert(cls.components[1:4] == ['x','y','r'])
-        for x, y ,r1,d in it.izip(X,Y,R,D):
-            #a = x + y + r
-            if d > dmax: continue
-            if d > dmax_2: 
-                r = r1 * (1-(d-dmax_2) / dmax_2)
-            else:
-                r = r1
-            """
         if not cls.displaylist:
             glLoadIdentity()
             cls.displaylist = glGenLists(1)
@@ -191,32 +183,24 @@ class Entity(BaseEntity):
             glEndList()
             
             
-        arraygl.draw_array(cls.displaylist,X,Y,Z,W,R)
-        return
-        for x, y ,r in it.izip(X,Y,R):
-            arraygl.draw_list(cls.displaylist,x,y,r)
-            """
-            glLoadIdentity()
-            glTranslatef(x,y,0)
-            glScalef(r,r,1)
-            #cls.shape.draw()
-            glCallList(cls.displaylist) # 5ms / 1000
-            """
+        #X,Y,Z,W,R = cls.farray("x,y,z,w,r")
+        #arraygl.draw_array2(cls.displaylist,X,Y,Z,W,R)
+        T,X,Y,Z,W,R = cls.array("t,x,y,z,w,r")
+        #print R.min(), R.max()
+        #arraygl.draw_array3(cls.displaylist,cls.entitytype,T.copy(),X.copy(),Y.copy(),Z.copy(),W.copy(),R.copy())
+        arraygl.draw_array3(cls.displaylist,cls.entitytype,T,X,Y,Z,W,R)
     
 
     @classmethod
     def update(cls,dt, depth=0):
-        if depth < 0: 
-            cls.update(dt/2.0, depth+1)
-            cls.update(dt/2.0, depth+1)
-            return
-        x,y,dx,dy,r = cls.farray("x,y,dx,dy,r")
-        T,X,Y,DX,DY,R = cls.array("t,x,y,dx,dy,r")
-        i = cls.idx()
-        X[i] += dx * dt
-        Y[i] += dy * dt
-        DX[i] -= x * dt
-        DY[i] -= y * dt
+        cls.idx_update()
+        i = cls.index
+        X,Y,W,DX,DY = cls.array("x,y,w,dx,dy")
+        X[i] += DX[i] * dt
+        Y[i] += DY[i] * dt
+        DX[i] -= X[i] * dt
+        DY[i] -= Y[i]* dt
+        W[i] += (DX[i] + DY[i]) * dt * 360
         return
         cd = sqrt(x**2 + y**2)
         xn = x / cd
@@ -346,7 +330,7 @@ for i in range(1000):
     EType = pyrandom.choice(entity_types)    
     e = EType()
     a = random.uniform(0,360)
-    d = random.normal(0.0,0.3)
+    d = random.normal(0.0,5.0)
     e.x = cos(a) * d
     e.y = sin(a) * d
     e.z = random.uniform(-0.5,0.5)
@@ -358,8 +342,8 @@ for i in range(1000):
 
     a = random.uniform(0,360)
     d = random.normal(0.5,1.5)
-    e.dx = cos(a) * d
-    e.dy = sin(a) * d
+    e.dx = cos(a) * d + e.x
+    e.dy = sin(a) * d + e.y
 
 #print Entity.components
 #print Entity.get_data()
@@ -404,8 +388,8 @@ print xlist.sum(), n.shape, xlist.shape
 print arraygl.numpylist(n,xlist)
 """
 pyglet.clock.schedule_interval(fps, 1)    
-#pyglet.clock.schedule(update)    
-pyglet.clock.schedule_interval(update, 1/65.0)    
+pyglet.clock.schedule(update)    
+#pyglet.clock.schedule_interval(update, 1/65.0)    
 fps(0)
 glEnable(GL_DEPTH_TEST)
 
