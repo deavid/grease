@@ -17,7 +17,7 @@ cdef extern from "chipmunk/chipmunk.h":
         cpFloat l, b, r ,t
         
     cpVect cpv(cpFloat x, cpFloat y)
-    
+
     ctypedef struct cpBody:
         # *** Integration Functions.
 
@@ -60,6 +60,14 @@ cdef extern from "chipmunk/chipmunk.h":
         # Maximum velocities this body can move at after integrating velocity
         cpFloat v_limit, w_limit
         
+    ctypedef struct cpConstraint:
+        cpBody *a, *b
+        cpFloat maxForce
+        cpFloat biasCoef
+        cpFloat maxBias
+    
+        cpDataPointer data
+
     cpBody *cpBodyAlloc()
     cpBody *cpBodyInit(cpBody *body, cpFloat m, cpFloat i)
     cpBody *cpBodyNew(cpFloat m, cpFloat i)
@@ -69,7 +77,22 @@ cdef extern from "chipmunk/chipmunk.h":
     
     void cpBodySetMass(cpBody *body, cpFloat m)
     void cpBodySetMoment(cpBody *body, cpFloat i)
-    
+
+    # ** Moment of inertia helper functions **
+    # Use the following functions to approximate the moment of inertia for your body, adding the results together if you want to use more than one.
+
+    # Calculate the moment of inertia for a hollow circle, r1 and r2 are the inner and outer diameters in no particular order. (A solid circle has an inner diameter of 0)
+    cpFloat cpMomentForCircle(cpFloat m, cpFloat r1, cpFloat r2, cpVect offset)
+
+    # Calculate the moment of inertia for a line segment. The endpoints a and b are relative to the body.
+    cpFloat cpMomentForSegment(cpFloat m, cpVect a, cpVect b)
+
+    # Calculate the moment of inertia for a solid polygon shape assuming it’s center of gravity is at it’s centroid. The offset is added to each vertex.
+    cpFloat cpMomentForPoly(cpFloat m, int numVerts, cpVect *verts, cpVect offset)
+
+    # Calculate the moment of inertia for a solid box centered on the body.    
+    cpFloat cpMomentForBox(cpFloat m, cpFloat width, cpFloat height)
+
     
     ctypedef struct cpSpace:
         # Number of iterations to use in the impulse solver to solve contacts.
@@ -113,6 +136,13 @@ cdef extern from "chipmunk/chipmunk.h":
     void cpSpaceResizeStaticHash(cpSpace *space, cpFloat dim, int count)
     void cpSpaceResizeActiveHash(cpSpace *space, cpFloat dim, int count)
 
+    # ** Simulating the Space: **
+
+    # Update the space for the given time step. Using a fixed time step 
+    # is highly recommended. Doing so will increase the efficiency of the 
+    # contact persistence, requiring an order of magnitude fewer 
+    # iterations and CPU usage.
+    void cpSpaceStep(cpSpace *space, cpFloat dt)
 
     ctypedef struct cpShape:
         # cpBody that the shape is attached to.
@@ -186,7 +216,7 @@ cdef extern from "chipmunk/chipmunk.h":
     cpPolyShape *cpPolyShapeAlloc()
     cpPolyShape *cpPolyShapeInit(cpPolyShape *poly, cpBody *body, int numVerts, cpVect *verts, cpVect offset)
     cpShape *cpPolyShapeNew(cpBody *body, int numVerts, cpVect *verts, cpVect offset)
-
+    cpShape *cpBoxShapeNew(cpBody *body, cpFloat width, cpFloat height)
     # body is the body to attach the poly to, verts is an array of cpVect structs defining a convex hull with a clockwise winding, offset is the offset from the body’s center of gravity in body local coordinates. An assertion will be thrown the vertexes are not convex or do not have a clockwise winding.
 
     int cpPolyShapeGetNumVerts(cpShape *shape)
@@ -194,7 +224,28 @@ cdef extern from "chipmunk/chipmunk.h":
 
     # Getters for poly shape properties. Passing a non-poly shape or an index that does not exist will throw an assertion.
 
-    
+    # **** Operations: ***
+    #  These functions add and remove shapes, bodies and constraints from 
+    #  space. See the section on Static Shapes above for an explanation of 
+    #  what a static shape is and how it differs from a normal shape. Also, 
+    #  you cannot call the any of these functions from within a callback 
+    #  other than a post-step callback (which is different than a post-solve 
+    #  callback!). Attempting to add or remove objects from the space while 
+    #  cpSpaceStep() is still executing will throw an assertion. See the 
+    #  callbacks section for more information.
+
+    void cpSpaceAddShape(cpSpace *space, cpShape *shape)
+    void cpSpaceAddStaticShape(cpSpace *space, cpShape *shape)
+    void cpSpaceAddBody(cpSpace *space, cpBody *body)
+    void cpSpaceAddConstraint(cpSpace *space, cpConstraint *constraint)
+
+    void cpSpaceRemoveShape(cpSpace *space, cpShape *shape)
+    void cpSpaceRemoveStaticShape(cpSpace *space, cpShape *shape)
+    void cpSpaceRemoveBody(cpSpace *space, cpBody *body)
+    void cpSpaceRemoveConstraint(cpSpace *space, cpConstraint *constraint)
+
+
+
     # MATH::    
     # Clamp f to be between min and max.
     cpFloat cpfclamp(cpFloat f, cpFloat minimum, cpFloat maximum)
@@ -232,6 +283,12 @@ cdef class Body:
         if self.automanaged:
             cpBodyFree(self.cpbody)
     
+    def set_position(self, x, y):
+        self.cpbody.p = cpv(x,y)
+    
+    def position(self):
+        return (self.cpbody.p.x,self.cpbody.p.y)
+    
     @property
     def mass(self):
         return self.cpbody.m
@@ -256,6 +313,7 @@ cdef class Body:
 
 cdef class Shape:
     cpdef cpShape* cpshape
+    cpdef Body body
     cpdef int automanaged
     def __cinit__(self):
         self.cpshape = NULL
@@ -264,12 +322,25 @@ cdef class Shape:
     def __dealloc__(self):
         if self.automanaged:
             cpShapeFree(self.cpshape)
+
+    cpdef elasticity(self): return self.cpshape.e
+    cpdef set_elasticity(self, value): self.cpshape.e = float(value)
+
+    cpdef friction(self): return self.cpshape.u
+    cpdef set_friction(self, value): self.cpshape.u = float(value)
+    
             
 cdef class CircleShape(Shape):
     def __cinit__(self, Body body, cpFloat radius, offset_xy):
         cdef cpVect offset = cpv(offset_xy[0],offset_xy[1])
         self.body = body
         self.cpshape = cpCircleShapeNew(body.cpbody, radius, offset)
+        self.automanaged = 1
+    
+cdef class BoxShape(Shape):
+    def __cinit__(self, Body body, cpFloat width, cpFloat height):
+        self.body = body
+        self.cpshape = cpBoxShapeNew(body.cpbody, width, height)
         self.automanaged = 1
     
     
@@ -287,6 +358,27 @@ cdef class Space:
         self.staticBody = None
         cpSpaceFree(self.cpspace)
     
+    def addBody(self, Body body):
+        cpSpaceAddBody(self.cpspace, body.cpbody)
+    
+    def addShape(self, Shape shape):
+        cpSpaceAddShape(self.cpspace, shape.cpshape)
+        
+    def newBox(self, width, height, mass, elasticity = 0, friction = 0.5):
+        body = Body(mass, cpMomentForBox(mass, width, height))
+        self.addBody(body)
+        shape = BoxShape(body, width, height)
+        shape.set_elasticity(elasticity)
+        shape.set_friction(friction)
+        self.addShape(shape)
+        return body, shape
+        
+    def step(self, float dt, int iterations):
+        cdef int i
+        for i in range(iterations):
+            cpSpaceStep(self.cpspace, dt)
+            
+    
     @property
     def iterations(self):
         return self.cpspace.iterations
@@ -303,14 +395,9 @@ cdef class Space:
     def setelasticIterations(self, value):
         self.cpspace.elasticIterations = int(value)
         
-    @property
-    def gravity(self):
-        return (self.cpspace.gravity.x,self.cpspace.gravity.y)
-    
-    @gravity.setter
-    def setgravity(self, x, y):
-        self.cpspace.gravity.x = float(x)
-        self.cpspace.gravity.y = float(y)
+    def get_gravity(self): return (self.cpspace.gravity.x,self.cpspace.gravity.y)
+    def set_gravity(self, object xy): self.cpspace.gravity.x, self.cpspace.gravity.y = xy
+    gravity = property(get_gravity,set_gravity)
     
     @property
     def damping(self):
