@@ -14,6 +14,7 @@ system_platform = platform.system().lower()
 OPENGL_LIBNAME = None
 GLUT_LIBNAME = None
 GLU_LIBNAME = None
+CHIPMUNK_LIBNAME = "chipmunk"
 
 if system_platform == "linux":
     OPENGL_LIBNAME = "GL"
@@ -65,6 +66,9 @@ ext_modules.append(Extension("grease.cython.collision",
 
 ext_modules.append(Extension("grease.cython.arraygl", 
     ["grease/cython/arraygl.pyx"], libraries = [OPENGL_LIBNAME]))
+
+ext_modules.append(Extension("grease.cython.chipmunk", 
+    ["grease/cython/chipmunk.pyx"], libraries = [CHIPMUNK_LIBNAME]))
 
 setup(
     name='grease',

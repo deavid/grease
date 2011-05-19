@@ -5,6 +5,8 @@ from numpy import *
 import itertools as it
 import time
 
+import squirtle 
+
 from grease.cython import arraygl
 
 from OpenGL.GL import *
@@ -164,7 +166,7 @@ class BaseEntity(object):
 class Entity(BaseEntity):
     entitytype  = entity_type_counter.next()
     centerpoint = array( (0,0,0,0,0) )
-    mycircle = vstack((centerpoint,circle(24)))
+    mycircle = vstack((centerpoint,circle(48)))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
@@ -290,7 +292,7 @@ class Entity(BaseEntity):
 class EntityRed(Entity):
     entitytype  = entity_type_counter.next()
     centerpoint = array( (0,0,1,0,0) )
-    mycircle = vstack((centerpoint,circle(24,c='r00')))
+    mycircle = vstack((centerpoint,circle(64,c='r00')))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
@@ -299,7 +301,7 @@ class EntityRed(Entity):
 class EntityGreen(Entity):
     entitytype  = entity_type_counter.next()
     centerpoint = array( (0,0,0,1,0) )
-    mycircle = vstack((centerpoint,circle(24,c='0g0')))
+    mycircle = vstack((centerpoint,circle(96,c='0g0')))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
@@ -309,10 +311,37 @@ class EntityGreen(Entity):
 class EntityBlue(Entity):
     entitytype  = entity_type_counter.next()
     centerpoint = array( (0,0,0,0,1) )
-    mycircle = vstack((centerpoint,circle(24,c='00b')))
+    mycircle = vstack((centerpoint,circle(128,c='00b')))
     shape = pyglet.graphics.Batch()
     shape_count, shape_data = vertexlist(mycircle)
     shape.add(shape_count,pyglet.gl.GL_TRIANGLE_FAN,None,*shape_data)
+    displaylist = None
+
+class MyShape(object):
+    def __init__(self, filename, quality = 4):
+        self.shape = squirtle.SVG(filename, bezier_points=quality, 
+            circle_points=quality * 3, anchor_x='center', anchor_y='center', reversed_order=True)
+        max_size = max([self.shape.width,self.shape.height])
+        
+        self.main_scale = 1.0 /  max_size
+        self.displaylist = self.shape.disp_list
+        #print self.shape.width
+        #self.shape.width = 1
+        #self.shape.height = 1
+        #print self.shape.width
+        
+    def draw(self):
+        self.shape.draw(x=0,y=0, scale=self.main_scale)
+    
+"""
+class EntityNucleus(Entity):
+    entitytype  = entity_type_counter.next()
+    shape = MyShape("svg/nucleus.svg", 5)
+    displaylist = None
+"""
+class EntityShip(Entity):
+    entitytype  = entity_type_counter.next()
+    shape = MyShape("svg/ship.svg", 6)
     displaylist = None
         
 def entityblue_update(cls,dt, depth=0):
@@ -324,13 +353,14 @@ def entityblue_update(cls,dt, depth=0):
 EntityBlue.parent_update = EntityBlue.update
 EntityBlue.update = classmethod(entityblue_update)
     
-entity_types=[Entity,EntityGreen, EntityRed, EntityBlue]
+#entity_types=[Entity,EntityGreen, EntityRed, EntityBlue,EntityNucleus]
+entity_types=[EntityShip]
 
 for i in range(1000):
     EType = pyrandom.choice(entity_types)    
     e = EType()
     a = random.uniform(0,360)
-    d = random.normal(0.0,5.0)
+    d = random.normal(0.0,1.0)
     e.x = cos(a) * d
     e.y = sin(a) * d
     e.z = random.uniform(-0.5,0.5)
@@ -396,10 +426,15 @@ n = arange(33)
 print xlist.sum(), n.shape, xlist.shape
 print arraygl.numpylist(n,xlist)
 """
+#squirtle.setup_gl()
+glEnable(GL_DEPTH_TEST)
+glEnable(GL_LINE_SMOOTH)
+glEnable(GL_BLEND)
+glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
 pyglet.clock.schedule_interval(fps, 1)    
 pyglet.clock.schedule(update)    
 #pyglet.clock.schedule_interval(update, 1/65.0)    
 fps(0)
-glEnable(GL_DEPTH_TEST)
 
 pyglet.app.run()
